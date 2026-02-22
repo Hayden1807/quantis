@@ -29,6 +29,7 @@ services:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/consumption
       BIND_ADDR: 0.0.0.0:8080
       RUST_LOG: info
+      JWT_SECRET: dev-secret-change-me
     expose:
       - "8080"
     volumes:
@@ -54,4 +55,3 @@ volumes:
   cargo-registry:
   cargo-git:
   target:
-

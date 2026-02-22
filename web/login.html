@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8" />
+<h3>Login</h3>
+
+<input id="email" placeholder="email" />
+<br />
+<input id="password" type="password" placeholder="password" />
+<br />
+<button id="btn">Log in</button>
+
+<pre id="out"></pre>
+
+<script>
+  btn.onclick = async () => {
+    out.textContent = "loading...";
+    const res = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: email.value,
+        password: password.value,
+      }),
+    });
+
+    const text = await res.text();
+    out.textContent = `HTTP ${res.status}\n${text}`;
+  };
+</script>
