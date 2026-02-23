@@ -1,0 +1,173 @@
+.hist{
+    padding: 32px 0 80px;
+  }
+  
+  /* ===== Header page ===== */
+  .hist__head{
+    display:flex;
+    align-items:flex-end;
+    justify-content:space-between;
+    gap: 16px;
+    margin: 22px 0 18px;
+  }
+  
+  .hist__title{
+    flex: 1 1 auto;
+    text-align: center;
+  }
+  
+  .hist__title h1{
+    margin: 0 0 6px;
+    font-size: clamp(24px, 2.8vw, 36px);
+    letter-spacing: -0.6px;
+    font-weight: 800;
+    line-height: 1.15;
+  }
+  
+  .hist__title p{
+    margin:0 auto;
+    color: var(--muted);
+    line-height: 1.6;
+    max-width: 70ch;
+  }
+  
+  .hist__scope{ color: rgba(255,255,255,0.92); }
+  
+  .hist__actionsLeft{
+    flex: 0 0 auto;
+    display:flex;
+    align-items:center;
+    justify-content:flex-start;
+    min-width: 170px;
+  }
+  
+  .hist__actionsRight{
+    flex: 0 0 auto;
+    display:flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+    min-width: 170px;
+  }
+
+  .hist__exportTop{
+    display:none;
+  }
+  
+  .hist__count{
+    font-weight: 800;
+    font-size: 12px;
+  }
+  
+  /* ===== Filters ===== */
+  .histFilters__body{
+    padding: 16px 18px 18px;
+  }
+  
+  .histFilters__grid{
+    display:grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 12px;
+    align-items:end;
+  }
+  
+  .histFilters__grid .field{ margin:0; }
+  
+  .histFilters__grid .field:nth-child(1){ grid-column: span 3; } /* Du */
+  .histFilters__grid .field:nth-child(2){ grid-column: span 3; } /* Au */
+  .histFilters__grid .field:nth-child(3){ grid-column: span 3; } /* Statut */
+  .histFilters__grid .field:nth-child(4){ grid-column: span 3; } /* Recherche */
+  
+  .histFilters__cta{
+    grid-column: 1 / -1;
+    display:flex;
+    gap: 10px;
+    justify-content:flex-end;
+    flex-wrap: wrap;
+    margin-top: 2px;
+  }
+  
+  /* ===== Table section ===== */
+  .hist__grid{
+    margin-top: 18px;
+  }
+  
+  /* ===== Pager ===== */
+  .histPager{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap: 12px;
+    padding: 14px 18px 18px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.02);
+  }
+  
+  .histPager__meta{
+    font-weight: 800;
+    font-size: 12px;
+  }
+  
+  /* ===== Responsive ===== */
+  @media (max-width: 980px){
+    .hist__head{
+      align-items:flex-start;
+      flex-direction: column;
+    }
+  
+    .hist__title{
+      text-align: left;
+    }
+  
+    .hist__actionsLeft,
+    .hist__actionsRight{
+      min-width: auto;
+      width: 100%;
+      justify-content: flex-start;
+    }
+  
+    .histFilters__grid .field:nth-child(1),
+    .histFilters__grid .field:nth-child(2),
+    .histFilters__grid .field:nth-child(3),
+    .histFilters__grid .field:nth-child(4){
+      grid-column: span 6;
+    }
+  }
+  
+  @media (max-width: 760px){
+    .histFilters__grid{
+      grid-template-columns: 1fr 1fr;
+    }
+  
+    .histFilters__grid .field:nth-child(1),
+    .histFilters__grid .field:nth-child(2),
+    .histFilters__grid .field:nth-child(3),
+    .histFilters__grid .field:nth-child(4){
+      grid-column: span 2;
+    }
+  
+    .histPager{
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .histPager .btn{ width: 100%; }
+
+
+    .hist__exportTop{
+      display: inline-flex;
+      padding: 9px 12px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .hist__actionsLeft{
+      display:none;
+    }
+
+    .histFilters__cta{
+      justify-content: center;
+    }
+  }
+  

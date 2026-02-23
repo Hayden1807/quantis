@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quantis — Dashboard</title>
+    <link rel="stylesheet" href="../css/shared/base.css" />
+    <link rel="stylesheet" href="../css/shared/ui.css" />
+    <link rel="stylesheet" href="../css/shared/header.css" />
+    <link rel="stylesheet" href="../css/shared/components.css" />
+    <link rel="stylesheet" href="../css/dash.css" />
+  </head>
+  <body>
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="container topbar__inner">
+        <a class="brand" href="../index.php">
+          <img
+            class="brand__logo"
+            src="../assets/images/QuantisLogo.png"
+            alt="Quantis"
+          />
+          <span class="brand__name">Quantis</span>
+        </a>
+
+        <nav class="nav" aria-label="Navigation principale">
+          <a class="nav__link" href="../index.php">Accueil</a>
+          <a class="nav__link active" href="dashboard.php">Dashboard</a>
+          <a class="nav__link" href="hist.php">Historique</a>
+        </nav>
+
+        <div class="profile">
+          <button
+            class="profile__btn"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded="false"
+          >
+            <img
+              class="profile__avatar"
+              src="../assets/images/User.png"
+              alt="Photo de profil"
+            />
+            <span class="profile__label">Profil</span>
+            <span class="profile__chev" aria-hidden="true">▾</span>
+          </button>
+
+          <div class="profile__menu" role="menu" aria-label="Menu profil">
+            <a href="profil.php" role="menuitem">Profil & Parametres</a>
+            <a href="../logout.php" role="menuitem">Déconnexion</a>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="container dash">
+      <!-- Header dashboard -->
+      <section class="dash__head">
+        <div class="dash__title">
+          <h1>Dashboard : <span class="dash__scope">Maison</span></h1>
+          <p>Suivi des consommations et saisies récentes.</p>
+        </div>
+
+        <div class="dash__actions">
+          <div class="select select--center">
+            <select id="placeSelect" aria-label="Lieu">
+              <option>Maison</option>
+              <option>Appartement</option>
+              <option>Bureau</option>
+            </select>
+          </div>
+
+          <a class="btn btn--primary" href="#add">+ Ajouter un profil</a>
+        </div>
+      </section>
+
+      <!-- KPI cards -->
+      <section class="kpi" aria-label="Indicateurs clés">
+        <article class="panel kpiCard kpiCard--elec">
+          <div class="panel__head">
+            <div>
+              <div class="panel__label">Électricité</div>
+              <div class="panel__value">732 <span class="unit">kWh</span></div>
+            </div>
+            <span
+              class="statusDot statusDot--orange"
+              title="À surveiller"
+            ></span>
+          </div>
+
+          <div class="panel__meta">
+            <span class="pill">Semaine</span>
+            <span class="delta delta--up">+8% vs semaine dernière</span>
+          </div>
+        </article>
+
+        <article class="panel kpiCard kpiCard--gas">
+          <div class="panel__head">
+            <div>
+              <div class="panel__label">Gaz</div>
+              <div class="panel__value">68 <span class="unit">kWh</span></div>
+            </div>
+            <span class="statusDot statusDot--green" title="OK"></span>
+          </div>
+
+          <div class="panel__meta">
+            <span class="pill">Semaine</span>
+            <span class="delta delta--down">-3% vs semaine dernière</span>
+          </div>
+        </article>
+
+        <article class="panel kpiCard kpiCard--goal">
+          <div class="panel__head">
+            <div>
+              <div class="panel__label">Objectif</div>
+              <div class="panel__value">+72 <span class="unit">kWh</span></div>
+            </div>
+            <span class="statusDot statusDot--red" title="Dépassement"></span>
+          </div>
+
+          <div class="panel__meta">
+            <span class="pill">Cible</span>
+            <span class="muted">Objectif : <strong>788 kWh</strong></span>
+          </div>
+
+          <div class="goalLine">
+            <div class="goalLine__bar" style="--p: 78%">
+              <span class="goalLine__fill"></span>
+            </div>
+            <div class="goalLine__text">Progression estimée : 78%</div>
+          </div>
+        </article>
+      </section>
+
+      <!-- Main grid -->
+      <section class="dash__grid">
+        <!-- Chart / Consumption -->
+        <article class="panel panel--big">
+          <header class="panelTop panelTop--consumption">
+            <div class="panelTop__left">
+              <h2 class="panelTop__title">Consommation</h2>
+
+              <div class="toggles" role="group" aria-label="Période">
+                <button id="btnWeek" class="toggle is-active" type="button">
+                  Semaine
+                </button>
+                <button id="btnMonth" class="toggle" type="button">Mois</button>
+              </div>
+            </div>
+
+            <div class="panelTop__right">
+              <div class="seg" role="group" aria-label="Type énergie">
+                <button id="btnElec" class="seg__btn is-active" type="button">
+                  Électricité
+                </button>
+                <button id="btnGas" class="seg__btn" type="button">Gaz</button>
+              </div>
+              <span
+                class="statusDot statusDot--orange"
+                title="À surveiller"
+              ></span>
+            </div>
+          </header>
+
+          <div class="panelBody">
+            <div class="panelNote">
+              <span class="muted">Dernière conso ajoutée :</span>
+              <strong>14/01/2026</strong>
+            </div>
+
+            <!-- CHART.JS -->
+            <div class="chart" aria-label="Histogramme hebdomadaire">
+              <canvas id="consumptionChart"></canvas>
+            </div>
+
+            <div class="panelFoot">
+              <div class="panelFoot__stats">
+                <div class="stat">
+                  <div class="stat__label">Écart vs semaine dernière</div>
+                  <div class="stat__value delta delta--up">+12 kWh</div>
+                </div>
+                <div class="stat">
+                  <div class="stat__label">Consomation totale</div>
+                  <div class="stat__value">
+                    201 <span class="unit">kWh</span>
+                  </div>
+                </div>
+              </div>
+
+              <a class="btn btn--ghost" href="#" download>Exporter (CSV)</a>
+            </div>
+          </div>
+
+          <!-- Recent entries table -->
+          <div class="panelDivider"></div>
+
+          <header class="panelTop panelTop--compact">
+            <h2 class="panelTop__title">Dernières saisies</h2>
+            <a class="link" href="hist.php">Voir Historique →</a>
+          </header>
+
+          <div
+            class="tableWrap"
+            role="region"
+            aria-label="Tableau des dernières saisies"
+          >
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th>Valeur</th>
+                  <th>Statut</th>
+                </tr>
+              </thead>
+              <tbody id="recentTbody">
+                <tr>
+                  <td>15/01/2026</td>
+                  <td>Élec</td>
+                  <td>12.2 kWh</td>
+                  <td><span class="dot dot--green" title="OK"></span></td>
+                </tr>
+                <tr>
+                  <td>14/01/2026</td>
+                  <td>Gaz</td>
+                  <td>9.6 kWh</td>
+                  <td>
+                    <span class="dot dot--orange" title="À surveiller"></span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>13/01/2026</td>
+                  <td>Élec</td>
+                  <td>15.1 kWh</td>
+                  <td><span class="dot dot--red" title="Alerte"></span></td>
+                </tr>
+                <tr>
+                  <td>12/01/2026</td>
+                  <td>Gaz</td>
+                  <td>8.4 kWh</td>
+                  <td><span class="dot dot--green" title="OK"></span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <!-- Right column -->
+        <aside class="side">
+          <!-- Add consumption form -->
+          <article class="panel" id="add">
+            <header class="panelTop panelTop--compact">
+              <h2 class="panelTop__title">Ajouter une consomation</h2>
+            </header>
+
+            <form id="addForm" class="form" action="#" method="post">
+              <div class="field">
+                <label for="date">Date</label>
+                <input id="date" type="date" value="2026-01-15" />
+              </div>
+
+              <div class="field">
+                <label for="type">Type</label>
+                <select id="type">
+                  <option>Électricité</option>
+                  <option>Gaz</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label for="value">Valeur (kWh)</label>
+                <input
+                  id="value"
+                  type="number"
+                  step="0.1"
+                  placeholder="ex: 78.1"
+                />
+                <div class="hint muted">
+                  Saisir la consommation du jour/période.
+                </div>
+              </div>
+
+              <button class="btn btn--primary form__btn" type="submit">
+                Enregistrer
+              </button>
+            </form>
+          </article>
+
+          <!-- Alerts & advice -->
+          <article class="panel">
+            <header class="panelTop panelTop--compact">
+              <h2 class="panelTop__title">Alertes & Conseils</h2>
+            </header>
+
+            <div class="adviceList">
+              <div class="advice">
+                <div class="advice__head">
+                  <span class="pill">Alerte</span>
+                  <span class="muted">Pic inhabituel</span>
+                </div>
+              </div>
+
+              <div class="advice">
+                <div class="advice__head">
+                  <span class="pill">Conseil</span>
+                  <span class="muted">Heures creuses</span>
+                </div>
+              </div>
+
+              <div class="advice">
+                <div class="advice__head">
+                  <span class="pill">Tendance</span>
+                  <span class="muted">Baisse progressive</span>
+                </div>
+              </div>
+            </div>
+          </article>
+        </aside>
+      </section>
+    </main>
+
+    <!-- Chart.js (CDN) + init -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+      const ctx = document.getElementById("consumptionChart");
+
+      // Données test (les mêmes "hauteurs" que tes barres CSS)
+      const consumptionChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels: [
+            "Lundi",
+            "Mardi",
+            "Mercredi",
+            "Jeudi",
+            "Vendredi",
+            "Samedi",
+            "Dimanche",
+          ],
+          datasets: [
+            {
+              label: "kWh",
+              data: [78, 52, 38, 84, 66, 42, 48],
+              borderWidth: 1,
+              borderRadius: 12,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { enabled: true },
+          },
+          scales: {
+            x: {
+              grid: { display: false },
+              ticks: {
+                color: "rgba(244,246,251,0.72)",
+                font: { weight: "900", size: 11 },
+              },
+            },
+            y: {
+              beginAtZero: true,
+              grid: { color: "rgba(255,255,255,0.08)" },
+              ticks: { color: "rgba(244,246,251,0.72)" },
+            },
+          },
+        },
+      });
+    </script>
+  </body>
+</html>
+
+<script>
+  const $ = (s) => document.querySelector(s);
+
+  // state
+  let currentPlaceId = null;
+  let period = "week"; // "week" | "month"
+  let energy = "electricity"; // "electricity" | "gas"
+  let chart = null;
+
+  function setActive(el, active) {
+    if (!el) return;
+    el.classList.toggle("is-active", !!active);
+  }
+
+  function fmtDateFR(isoText) {
+    if (!isoText) return "—";
+    const d = new Date(isoText);
+    if (Number.isNaN(d.getTime())) return isoText;
+    return d.toLocaleDateString("fr-FR");
+  }
+
+  function energyLabel(e) {
+    return e === "gas" ? "Gaz" : "Élec";
+  }
+
+  async function apiGet(url) {
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
+  async function apiPost(url, body) {
+    const res = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(text);
+    return text ? JSON.parse(text) : null;
+  }
+
+  async function loadPlaces() {
+    const places = await apiGet("/api/places");
+    const sel = $("#placeSelect");
+    sel.innerHTML = "";
+
+    for (const p of places) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.name;
+      sel.appendChild(opt);
+    }
+
+    if (places.length) {
+      currentPlaceId = places[0].id;
+      sel.value = currentPlaceId;
+    } else {
+      currentPlaceId = null;
+    }
+
+    sel.onchange = async () => {
+      currentPlaceId = sel.value;
+      await refreshAll();
+    };
+  }
+
+  async function loadSummary() {
+    if (!currentPlaceId) return;
+
+    const data = await apiGet(
+      `/api/dashboard/summary?place_id=${encodeURIComponent(currentPlaceId)}&period=${period}`,
+    );
+    // data.items: [{energy,total_kwh,goal_kwh,delta_kwh,last_recorded_at}, ...]
+
+    // Ici tu peux plugger sur tes KPI cards si tu mets des ids dans les spans.
+    // Pour proto: on met juste la date de dernière conso dans le bloc "Dernière conso ajoutée"
+    // (dans ton HTML c'est un <strong> sans id, donc on ne touche pas pour l'instant).
+    // Si tu veux, je te donne 2 ids à ajouter pour remplir ces champs.
+
+    return data;
+  }
+
+  async function loadSeries() {
+    if (!currentPlaceId) return;
+
+    const data = await apiGet(
+      `/api/dashboard/series?place_id=${encodeURIComponent(currentPlaceId)}&energy=${energy}&period=${period}`,
+    );
+    // { labels: ["YYYY-MM-DD"...], values: [..] }
+
+    const ctx = document.getElementById("consumptionChart");
+    if (!ctx) return;
+
+    const labels = data.labels.map((d) => {
+      // format court
+      const dt = new Date(d + "T00:00:00Z");
+      return dt.toLocaleDateString("fr-FR", { weekday: "short" });
+    });
+
+    if (!chart) {
+      chart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "kWh",
+              data: data.values,
+              borderWidth: 1,
+              borderRadius: 12,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } },
+        },
+      });
+    } else {
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = data.values;
+      chart.update();
+    }
+  }
+
+  async function loadRecent() {
+    if (!currentPlaceId) return;
+
+    const data = await apiGet(
+      `/api/dashboard/recent?place_id=${encodeURIComponent(currentPlaceId)}&limit=5`,
+    );
+    const tbody = $("#recentTbody");
+    tbody.innerHTML = "";
+
+    for (const r of data.items) {
+      const tr = document.createElement("tr");
+
+      const tdDate = document.createElement("td");
+      tdDate.textContent = fmtDateFR(r.recorded_at);
+
+      const tdType = document.createElement("td");
+      tdType.textContent = energyLabel(r.energy);
+
+      const tdVal = document.createElement("td");
+      tdVal.textContent = `${r.value} ${r.unit}`;
+
+      const tdStatus = document.createElement("td");
+      // Proto: dot green (on branchera ok/watch/alert plus tard via /alerts ou via history rules)
+      tdStatus.innerHTML = `<span class="dot dot--green" title="OK"></span>`;
+
+      tr.appendChild(tdDate);
+      tr.appendChild(tdType);
+      tr.appendChild(tdVal);
+      tr.appendChild(tdStatus);
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function refreshAll() {
+    await loadSummary();
+    await loadSeries();
+    await loadRecent();
+  }
+
+  function bindToggles() {
+    $("#btnWeek").onclick = async () => {
+      period = "week";
+      setActive($("#btnWeek"), true);
+      setActive($("#btnMonth"), false);
+      await refreshAll();
+    };
+    $("#btnMonth").onclick = async () => {
+      period = "month";
+      setActive($("#btnWeek"), false);
+      setActive($("#btnMonth"), true);
+      await refreshAll();
+    };
+
+    $("#btnElec").onclick = async () => {
+      energy = "electricity";
+      setActive($("#btnElec"), true);
+      setActive($("#btnGas"), false);
+      await loadSeries();
+      await loadRecent(); // optionnel: recent contient les 2, mais ça refresh table
+    };
+    $("#btnGas").onclick = async () => {
+      energy = "gas";
+      setActive($("#btnElec"), false);
+      setActive($("#btnGas"), true);
+      await loadSeries();
+      await loadRecent();
+    };
+  }
+
+  function bindAddForm() {
+    const form = $("#addForm");
+    if (!form) return;
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!currentPlaceId) return alert("Crée un lieu d'abord.");
+
+      const date = $("#date").value; // YYYY-MM-DD
+      const typeLabel = $("#type").value; // "Électricité" | "Gaz"
+      const value = Number($("#value").value);
+
+      if (!Number.isFinite(value)) return alert("Valeur invalide");
+
+      const energyVal = typeLabel === "Gaz" ? "gas" : "electricity";
+      const recorded_at = date ? `${date}T00:00:00Z` : null;
+
+      try {
+        await apiPost("/api/add-data", {
+          place_id: currentPlaceId,
+          value,
+          unit: "kwh",
+          energy: energyVal,
+          recorded_at,
+        });
+
+        // refresh
+        await refreshAll();
+        alert("Enregistré ✅");
+        $("#value").value = "";
+      } catch (err) {
+        alert("Erreur: " + err.message);
+      }
+    });
+  }
+
+  // init
+  (async function init() {
+    try {
+      await loadPlaces();
+      bindToggles();
+      bindAddForm();
+      await refreshAll();
+    } catch (e) {
+      console.error(e);
+      alert("Erreur dashboard: " + e.message);
+    }
+  })();
+</script>

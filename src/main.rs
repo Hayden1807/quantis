@@ -1,4 +1,4 @@
-use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{get, post, put, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use sqlx::{
     postgres::PgPoolOptions,
     PgPool,
@@ -88,6 +88,7 @@ struct AddDataReq {
     value: f64,
     unit: Option<String>,
     recorded_at: Option<String>,
+    energy: String,
 }
 
 #[derive(Serialize)]
@@ -96,7 +97,113 @@ struct ConsumptionResp {
     place_id: Uuid,
     value: f64,
     unit: String,
+    energy: String,
     recorded_at: String,
+}
+
+// Goal configuration
+#[derive(Deserialize)]
+struct SetGoalReq {
+    energy: String,
+    weekly_kwh: f64,
+    monthly_kwh: f64,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+struct GoalRow {
+    energy: String,
+    weekly_target_kwh: f64,
+    monthly_target_kwh: f64,
+}
+
+#[derive(Deserialize)]
+struct PlacePath {
+    place_id: Uuid,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+struct PlaceRow {
+    id: Uuid,
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct SummaryQuery {
+    place_id: Uuid,
+    period: String, // week || mounth
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+struct EnergySummary {
+    energy: String,
+    total_kwh: f64,
+    goal_kwh: f64,
+    delta_kwh: f64,
+    last_recorded_at: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SummaryResp {
+    period: String,
+    items: Vec<EnergySummary>,
+}
+
+#[derive(Deserialize)]
+struct SeriesQuery {
+    place_id: Uuid,
+    energy: String,
+    period: String,
+}
+#[derive(Serialize)]
+struct SeriesResp {
+    labels: Vec<String>,
+    values: Vec<f64>,
+}
+
+#[derive(Deserialize)]
+struct RecentQuery {
+    place_id: Uuid,
+    limit: Option<i64>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+struct RecentRow {
+    recorded_at: String,
+    energy: String,
+    value: f64,
+    unit: String,
+}
+#[derive(Serialize)]
+struct RecentResp {
+    items: Vec<RecentRow>,
+}
+
+// === History ===
+#[derive(Deserialize)]
+struct HistoryQuery {
+    place_id: Uuid,
+    from: Option<String>,
+    to: Option<String>,
+    energy: Option<String>,
+    status: Option<String>,
+    page: Option<i64>,
+    limit: Option<i64>,
+    sort: Option<String>,
+}
+#[derive(Serialize, sqlx::FromRow)]
+struct HistoryRow {
+    day: String,        // YYYY-MM-DD
+    energy: String,
+    total_kwh: f64,
+    goal_kwh: f64,
+    status: String,     // ok / watch / alert
+}
+#[derive(Serialize)]
+struct HistoryResp {
+    page: i64,
+    limit: i64,
+    total: i64,
+    items: Vec<HistoryRow>,
 }
 
 // == functions ==
@@ -151,7 +258,7 @@ fn is_request_secure(req: &HttpRequest) -> bool {
 }
 fn build_auth_cookie(state: &AppState, token: &str, secure: bool) -> Cookie<'static> {
     Cookie::build(state.auth_cookie_name.clone(), token.to_string())
-        .path("/api")
+        .path("/")
         .http_only(true)
         .same_site(SameSite::Strict)
         .secure(secure)
@@ -315,7 +422,6 @@ async fn login(req: HttpRequest, state: web::Data<AppState>, body: web::Json<Log
         .json(AuthResp { token, id, email: email_db })
 }
 
-// dashboard
 #[get("/me")]
 async fn me(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
     match require_auth(&req, state.get_ref()) {
@@ -375,12 +481,37 @@ async fn create_place(req: HttpRequest, state: web::Data<AppState>, body: web::J
     }
 }
 
+#[get("/places")]
+async fn list_places(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
+    // authentification
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let user_id = match Uuid::parse_str(&claims.sub) {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::Unauthorized().body("invalid token"),
+    };
+
+    let rows: Result<Vec<PlaceRow>, sqlx::Error> = sqlx::query_as("SELECT id, name FROM places WHERE user_id=$1 ORDER BY created_at DESC")
+        .bind(user_id)
+        .fetch_all(&state.db)
+        .await;
+
+    match rows {
+        Ok(v) => HttpResponse::Ok().json(v),
+        Err(e) => {
+            eprintln!("LIST PLACES ERROR: {e:?}");
+            HttpResponse::InternalServerError().body("db_error")
+        }
+    }
+}
 
 // destroy cookie
 #[post("/logout")]
 async fn logout(req:HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let mut c = Cookie::build(state.auth_cookie_name.clone(), "")
-        .path("/api")
+        .path("/")
         .http_only(true)
         .same_site(SameSite::Strict)
         //.secure(is_request_secure(&req)) false for a prototype
@@ -432,29 +563,576 @@ async fn add_data(req: HttpRequest, state: web::Data<AppState>, body: web::Json<
         return HttpResponse::BadRequest().body("invalid unit");
     }
 
+    // Check energy kind and validity
+    let energy = body.energy.trim().to_lowercase();
+    if !matches!(energy.as_str(), "electricity" | "gas") {
+        return HttpResponse::BadRequest().body("invalid energy type");
+    }
+
     // Insert into Database
-    let res: Result<(Uuid, Uuid, f64, String, String), sqlx::Error> = sqlx::query_as(
+    let res: Result<(Uuid, Uuid, f64, String, String, String), sqlx::Error> = sqlx::query_as(
         r#"
-        INSERT INTO consumptions (place_id, recorded_at, value, unit)
-        VALUES ($1, COALESCE($2::timestamptz, now()), $3, $4)
-        RETURNING id, place_id, value, unit, recorded_at::text
+        INSERT INTO consumptions (place_id, recorded_at, value, unit, energy)
+        VALUES ($1, COALESCE($2::timestamptz, now()), $3, $4, $5::energy_type)
+        RETURNING id, place_id, value, unit, energy::text,recorded_at::text
         "#,
     )
     .bind(body.place_id)
     .bind(body.recorded_at.as_deref())
     .bind(body.value)
     .bind(&unit)
+    .bind(&energy)
     .fetch_one(&state.db)
     .await;
 
     // get db result
     match res {
-        Ok((id, place_id, value, unit, recorded_at)) => HttpResponse::Created().json(ConsumptionResp { id, place_id, value, unit, recorded_at }),
+        Ok((id, place_id, value, unit, energy,recorded_at)) => HttpResponse::Created().json(ConsumptionResp { id, place_id, value, unit, energy, recorded_at }),
         Err(e) => {
             eprintln!("ADD-DATA insert error: {e:?}");
             HttpResponse::InternalServerError().body("db error")
         }
     }
+}
+
+#[get("places/{place_id}/goals")]
+async fn get_goals(req:HttpRequest, state: web::Data<AppState>, path: web::Path<PlacePath>,) -> impl Responder {
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    let user_id = match Uuid::parse_str(&claims.sub) {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::Unauthorized().body("Invalid token"),
+    };
+
+    let owns = sqlx::query_scalar::<_, i32>("SELECT 1 FROM places WHERE id=$1 AND user_id=$2")
+        .bind(path.place_id)
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await;
+
+    match owns {
+        Ok(Some(_)) => {}
+        Ok(None) => return HttpResponse::NotFound().body("place not found"),
+        Err(e) => {
+            eprintln!("GET GOALS owns error: {e:?}");
+            return HttpResponse::InternalServerError().body("db error");
+        }
+    }
+
+    let rows: Result<Vec<GoalRow>, sqlx::Error> = sqlx::query_as(
+        r#"
+        SELECT energy::text as energy, weekly_target_kwh, monthly_target_kwh
+        FROM place_goals
+        WHERE place_id = $1
+        ORDER BY energy
+        "#
+    )
+    .bind(path.place_id)
+    .fetch_all(&state.db)
+    .await;
+
+    match rows {
+        Ok(v) => HttpResponse::Ok().json(v),
+        Err(e) => {
+            eprintln!("GET GOALS error: {e:?}");
+            HttpResponse::InternalServerError().body("db error")
+        }
+    }
+}
+
+#[put("/places/{place_id}/goals")]
+async fn set_goal(req: HttpRequest, state: web::Data<AppState>, path: web::Path<PlacePath>, body: web::Json<SetGoalReq>,) -> impl Responder {
+    
+    // authentification
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let user_id = match Uuid::parse_str(&claims.sub) {
+        Ok(c) => c,
+        Err(_) => return HttpResponse::Unauthorized().body("invalid token subject"),
+    };
+
+    // owns place
+    let owns = sqlx::query_scalar::<_, i32>("SELECT 1 FROM places WHERE id=$1 AND user_id=$2")
+        .bind(path.place_id)
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await;
+
+    match owns {
+        Ok(Some(_)) => {}
+        Ok(None) => return HttpResponse::NotFound().body("place not found"),
+        Err(e) => {
+            eprintln!("SET GOAL owns error: {e:?}");
+            return HttpResponse::InternalServerError().body("db_error")
+        }
+    }
+
+    // check goal and unit validity
+    let energy = body.energy.trim().to_lowercase();
+    if !matches!(energy.as_str(), "electricity" | "gas") {
+        return HttpResponse:: BadRequest().body("invalid energy (electricity | gas)");
+    }
+    if !body.weekly_kwh.is_finite() || body.weekly_kwh < 0.0 || !body.monthly_kwh.is_finite() || body.monthly_kwh < 0.0 { //why not weekly is finit
+        return HttpResponse::BadRequest().body("invalid goal values");    
+    }
+
+    // Insert into database
+    let row: Result<GoalRow, sqlx::Error> = sqlx::query_as(
+        r#"
+        INSERT INTO place_goals (place_id, energy, weekly_target_kwh, monthly_target_kwh, updated_at)
+        VALUES ($1, $2::energy_type, $3, $4, now())
+        ON CONFLICT (place_id, energy)
+        DO UPDATE SET
+            weekly_target_kwh = EXCLUDED.weekly_target_kwh,
+            monthly_target_kwh = EXCLUDED.monthly_target_kwh,
+            updated_at = now()
+        RETURNING energy::text as energy, weekly_target_kwh, monthly_target_kwh
+        "#
+    )
+    .bind(path.place_id)
+    .bind(&energy)
+    .bind(body.weekly_kwh)
+    .bind(body.monthly_kwh)
+    .fetch_one(&state.db)
+    .await;
+
+    match row {
+        Ok(g) => HttpResponse::Ok().json(g),
+        Err(e) => {
+            eprintln!("SET GOAL error: {e:?}");
+            HttpResponse::InternalServerError().body("db error")
+        }
+    }
+}
+
+// === Dashboard ===
+#[get("/dashboard/summary")]
+async fn dashboard_summary(req: HttpRequest, state: web::Data<AppState>, q: web::Query<SummaryQuery>) -> impl Responder {
+    // authentification
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let user_id = match Uuid::parse_str(&claims.sub) {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::Unauthorized().body("invalid token"),
+    };
+
+    // owns
+    let owns = sqlx::query_scalar::<_, i32>("SELECT 1 FROM places WHERE id=$1 AND user_id=$2")
+        .bind(q.place_id)
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await;
+
+    match owns {
+        Ok(Some(_)) => {}
+        Ok(None) => return HttpResponse::NotFound().body("place not found"),
+        Err(e) => {
+            eprintln!("SUMMARY owns error: {e:?}");
+            return HttpResponse::InternalServerError().body("db error");
+        }
+    }
+
+    let period = q.period.trim().to_lowercase();
+    if !matches!(period.as_str(), "week" | "month") {
+        return HttpResponse::BadRequest().body("period must be week or month");
+    }
+
+    // interval + goal
+    let (interval_sql, goal_col) = if period == "week" {
+        ("interval '7 days'", "weekly_target_kwh")
+    } else {
+        ("interval '30 days'", "monthly_target_kwh")
+    };
+
+    let sql = format!(r#"
+      WITH totals AS (
+        SELECT
+          c.energy::text AS energy,
+          COALESCE(SUM(c.value),0)::float8 AS total_kwh,
+          MAX(c.recorded_at)::text AS last_recorded_at
+        FROM consumptions c
+        WHERE c.place_id = $1
+          AND c.recorded_at >= (now() - {interval_sql})
+        GROUP BY c.energy
+      ),
+      goals AS (
+        SELECT
+          g.energy::text AS energy,
+          COALESCE(g.{goal_col},0)::float8 AS goal_kwh
+        FROM place_goals g
+        WHERE g.place_id = $1
+      )
+      SELECT
+        e.energy::text AS energy,
+        COALESCE(t.total_kwh,0)::float8 AS total_kwh,
+        COALESCE(go.goal_kwh,0)::float8 AS goal_kwh,
+        (COALESCE(t.total_kwh,0) - COALESCE(go.goal_kwh,0))::float8 AS delta_kwh,
+        t.last_recorded_at
+      FROM (VALUES ('electricity'::energy_type), ('gas'::energy_type)) e(energy)
+      LEFT JOIN totals t ON t.energy = e.energy::text
+      LEFT JOIN goals go ON go.energy = e.energy::text
+      ORDER BY e.energy::text
+    "#);
+
+    let rows: Result<Vec<EnergySummary>, sqlx::Error> = sqlx::query_as(&sql)
+        .bind(q.place_id)
+        .fetch_all(&state.db)
+        .await;
+
+    match rows {
+        Ok(items) => HttpResponse::Ok().json(SummaryResp { period, items }),
+        Err(e) => { eprintln!("SUMMARY ERROR: {e:?}"); HttpResponse::InternalServerError().body("db error") }
+    }
+}
+#[get("/dashboard/series")]
+async fn dashboard_series(req: HttpRequest, state: web::Data<AppState>, q: web::Query<SeriesQuery>,) -> impl Responder {
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let user_id = match Uuid::parse_str(&claims.sub) {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::Unauthorized().body("invalid token subject"),
+    };
+
+    // owns place
+    let owns = sqlx::query_scalar::<_, i32>("SELECT 1 FROM places WHERE id=$1 AND user_id=$2")
+        .bind(q.place_id)
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await;
+
+    match owns {
+        Ok(Some(_)) => {}
+        Ok(None) => return HttpResponse::NotFound().body("place not found"),
+        Err(e) => { eprintln!("SERIES owns error: {e:?}"); return HttpResponse::InternalServerError().body("db error"); }
+    }
+
+    let energy = q.energy.trim().to_lowercase();
+    if !matches!(energy.as_str(), "electricity" | "gas") {
+        return HttpResponse::BadRequest().body("energy must be electricity|gas");
+    }
+    let period = q.period.trim().to_lowercase();
+    if !matches!(period.as_str(), "week" | "month") {
+        return HttpResponse::BadRequest().body("period must be week|month");
+    }
+
+       // 7 points pour week, 30 points pour month (proto)
+    let days: i64 = if period == "week" { 6 } else { 29 };
+
+    let rows: Result<Vec<(String, f64)>, sqlx::Error> = sqlx::query_as(
+        r#"
+        WITH days AS (
+          SELECT generate_series(
+            date_trunc('day', now()) - ($3::int * interval '1 day'),
+            date_trunc('day', now()),
+            interval '1 day'
+          ) AS d
+        ),
+        agg AS (
+          SELECT
+            date_trunc('day', c.recorded_at) AS d,
+            SUM(c.value)::float8 AS v
+          FROM consumptions c
+          WHERE c.place_id = $1
+            AND c.energy = $2::energy_type
+            AND c.recorded_at >= (date_trunc('day', now()) - ($3::int * interval '1 day'))
+          GROUP BY 1
+        )
+        SELECT
+          to_char(days.d, 'YYYY-MM-DD') AS label,
+          COALESCE(agg.v, 0)::float8 AS value
+        FROM days
+        LEFT JOIN agg ON agg.d = days.d
+        ORDER BY days.d
+        "#
+    )
+    .bind(q.place_id)
+    .bind(&energy)
+    .bind(days)
+    .fetch_all(&state.db)
+    .await;
+
+    match rows {
+        Ok(v) => {
+            let (labels, values): (Vec<_>, Vec<_>) = v.into_iter().unzip();
+            HttpResponse::Ok().json(SeriesResp { labels, values })
+        }
+        Err(e) => { eprintln!("SERIES ERROR: {e:?}"); HttpResponse::InternalServerError().body("db error") }
+    }
+}
+#[get("/dashboard/recent")]
+async fn dashboard_recent(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    q: web::Query<RecentQuery>,
+) -> impl Responder {
+    // auth
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let user_id = match Uuid::parse_str(&claims.sub) {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::Unauthorized().body("invalid token subject"),
+    };
+
+    // owns place
+    let owns = sqlx::query_scalar::<_, i32>("SELECT 1 FROM places WHERE id=$1 AND user_id=$2")
+        .bind(q.place_id)
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await;
+
+    match owns {
+        Ok(Some(_)) => {}
+        Ok(None) => return HttpResponse::NotFound().body("place not found"),
+        Err(e) => {
+            eprintln!("RECENT owns error: {e:?}");
+            return HttpResponse::InternalServerError().body("db error");
+        }
+    }
+
+    // limit clamp (proto safe)
+    let mut limit = q.limit.unwrap_or(10);
+    if limit < 1 { limit = 1; }
+    if limit > 50 { limit = 50; }
+
+    let rows: Result<Vec<RecentRow>, sqlx::Error> = sqlx::query_as(
+        r#"
+        SELECT
+          recorded_at::text AS recorded_at,
+          energy::text      AS energy,
+          value             AS value,
+          unit              AS unit
+        FROM consumptions
+        WHERE place_id = $1
+        ORDER BY recorded_at DESC
+        LIMIT $2
+        "#
+    )
+    .bind(q.place_id)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await;
+
+    match rows {
+        Ok(items) => HttpResponse::Ok().json(RecentResp { items }),
+        Err(e) => {
+            eprintln!("RECENT ERROR: {e:?}");
+            HttpResponse::InternalServerError().body("db error")
+        }
+    }
+}
+
+
+#[get("/history")]
+async fn history(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    q: web::Query<HistoryQuery>,
+) -> impl Responder {
+    // auth
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let user_id = match Uuid::parse_str(&claims.sub) {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::Unauthorized().body("invalid token subject"),
+    };
+
+    // owns place
+    let owns = sqlx::query_scalar::<_, i32>("SELECT 1 FROM places WHERE id=$1 AND user_id=$2")
+        .bind(q.place_id)
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await;
+
+    match owns {
+        Ok(Some(_)) => {}
+        Ok(None) => return HttpResponse::NotFound().body("place not found"),
+        Err(e) => {
+            eprintln!("HISTORY owns error: {e:?}");
+            return HttpResponse::InternalServerError().body("db error");
+        }
+    }
+
+    // pagination
+    let mut page = q.page.unwrap_or(1);
+    if page < 1 { page = 1; }
+    let mut limit = q.limit.unwrap_or(50);
+    if limit < 1 { limit = 1; }
+    if limit > 200 { limit = 200; }
+    let offset = (page - 1) * limit;
+
+    // from/to defaults (last 30 days) handled in SQL when empty string
+    let from = q.from.clone().unwrap_or_else(|| "".to_string());
+    let to = q.to.clone().unwrap_or_else(|| "".to_string());
+
+    // energy filter -> Option (NULL means no filter)
+    let energy = q.energy.as_deref().unwrap_or("all").to_lowercase();
+    if !matches!(energy.as_str(), "all" | "electricity" | "gas") {
+        return HttpResponse::BadRequest().body("energy must be all|electricity|gas");
+    }
+    let energy_param: Option<String> = if energy == "all" { None } else { Some(energy) };
+
+    // status filter -> Option (NULL means no filter)
+    let status = q.status.as_deref().unwrap_or("all").to_lowercase();
+    if !matches!(status.as_str(), "all" | "ok" | "watch" | "alert") {
+        return HttpResponse::BadRequest().body("status must be all|ok|watch|alert");
+    }
+    let status_param: Option<String> = if status == "all" { None } else { Some(status) };
+
+    // sort (safe whitelist)
+    let sort = q.sort.as_deref().unwrap_or("desc").to_lowercase();
+    let sort_sql = if sort == "asc" { "ASC" } else { "DESC" };
+
+    // COUNT query (fixed params: $1..$5, $6/$7 not used here but we still bind them for uniformity)
+    // We keep only $1..$5 in SQL and bind only those 5 for count to avoid useless binds.
+    let count_sql = r#"
+      WITH bounds AS (
+        SELECT
+          CASE WHEN $2 = '' THEN (date_trunc('day', now()) - interval '29 days')::date ELSE $2::date END AS d_from,
+          CASE WHEN $3 = '' THEN (date_trunc('day', now()))::date ELSE $3::date END AS d_to
+      ),
+      daily AS (
+        SELECT
+          to_char(date_trunc('day', c.recorded_at), 'YYYY-MM-DD') AS day,
+          c.energy::text AS energy,
+          SUM(c.value)::float8 AS total_kwh
+        FROM consumptions c, bounds b
+        WHERE c.place_id = $1
+          AND c.recorded_at >= b.d_from
+          AND c.recorded_at < (b.d_to + 1)
+          AND ($4::text IS NULL OR c.energy = $4::energy_type)
+        GROUP BY 1, 2
+      ),
+      goals AS (
+        SELECT
+          g.energy::text AS energy,
+          CASE
+            WHEN g.weekly_target_kwh > 0 THEN (g.weekly_target_kwh / 7.0)
+            WHEN g.monthly_target_kwh > 0 THEN (g.monthly_target_kwh / 30.0)
+            ELSE 0.0
+          END AS goal_kwh
+        FROM place_goals g
+        WHERE g.place_id = $1
+      ),
+      enriched AS (
+        SELECT
+          d.day, d.energy, d.total_kwh,
+          COALESCE(go.goal_kwh, 0.0)::float8 AS goal_kwh,
+          CASE
+            WHEN COALESCE(go.goal_kwh, 0.0) <= 0.0 THEN 'ok'
+            WHEN d.total_kwh <= go.goal_kwh THEN 'ok'
+            WHEN d.total_kwh <= (go.goal_kwh * 1.1) THEN 'watch'
+            ELSE 'alert'
+          END AS status
+        FROM daily d
+        LEFT JOIN goals go ON go.energy = d.energy
+      )
+      SELECT COUNT(*)::bigint
+      FROM enriched
+      WHERE ($5::text IS NULL OR status = $5)
+    "#;
+
+    let total: i64 = match sqlx::query_scalar(count_sql)
+        .bind(q.place_id)
+        .bind(&from)
+        .bind(&to)
+        .bind(energy_param.as_deref()) // Option<&str> -> NULL if None
+        .bind(status_param.as_deref()) // Option<&str>
+        .fetch_one(&state.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("HISTORY count error: {e:?}");
+            return HttpResponse::InternalServerError().body("db error");
+        }
+    };
+
+    // DATA query (fixed params $1..$7)
+    let data_sql = format!(r#"
+      WITH bounds AS (
+        SELECT
+          CASE WHEN $2 = '' THEN (date_trunc('day', now()) - interval '29 days')::date ELSE $2::date END AS d_from,
+          CASE WHEN $3 = '' THEN (date_trunc('day', now()))::date ELSE $3::date END AS d_to
+      ),
+      daily AS (
+        SELECT
+          to_char(date_trunc('day', c.recorded_at), 'YYYY-MM-DD') AS day,
+          c.energy::text AS energy,
+          SUM(c.value)::float8 AS total_kwh
+        FROM consumptions c, bounds b
+        WHERE c.place_id = $1
+          AND c.recorded_at >= b.d_from
+          AND c.recorded_at < (b.d_to + 1)
+          AND ($4::text IS NULL OR c.energy = $4::energy_type)
+        GROUP BY 1, 2
+      ),
+      goals AS (
+        SELECT
+          g.energy::text AS energy,
+          CASE
+            WHEN g.weekly_target_kwh > 0 THEN (g.weekly_target_kwh / 7.0)
+            WHEN g.monthly_target_kwh > 0 THEN (g.monthly_target_kwh / 30.0)
+            ELSE 0.0
+          END AS goal_kwh
+        FROM place_goals g
+        WHERE g.place_id = $1
+      ),
+      enriched AS (
+        SELECT
+          d.day, d.energy, d.total_kwh,
+          COALESCE(go.goal_kwh, 0.0)::float8 AS goal_kwh,
+          CASE
+            WHEN COALESCE(go.goal_kwh, 0.0) <= 0.0 THEN 'ok'
+            WHEN d.total_kwh <= go.goal_kwh THEN 'ok'
+            WHEN d.total_kwh <= (go.goal_kwh * 1.1) THEN 'watch'
+            ELSE 'alert'
+          END AS status
+        FROM daily d
+        LEFT JOIN goals go ON go.energy = d.energy
+      )
+      SELECT day, energy, total_kwh, goal_kwh, status
+      FROM enriched
+      WHERE ($5::text IS NULL OR status = $5)
+      ORDER BY day {sort_sql}, energy ASC
+      LIMIT $6 OFFSET $7
+    "#);
+
+    let items: Vec<HistoryRow> = match sqlx::query_as(&data_sql)
+        .bind(q.place_id)
+        .bind(&from)
+        .bind(&to)
+        .bind(energy_param.as_deref())
+        .bind(status_param.as_deref())
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&state.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("HISTORY data error: {e:?}");
+            return HttpResponse::InternalServerError().body("db error");
+        }
+    };
+
+    HttpResponse::Ok().json(HistoryResp {
+        page,
+        limit,
+        total,
+        items,
+    })
 }
 
 #[actix_web::main]
@@ -498,6 +1176,13 @@ async fn main() -> std::io::Result<()> {
             .service(logout)
             .service(create_place)
             .service(add_data)
+            .service(set_goal)
+            .service(get_goals)
+            .service(list_places)
+            .service(dashboard_summary)
+            .service(dashboard_series)
+            .service(dashboard_recent)
+            .service(history)
     })
     .bind(("0.0.0.0", 8080))?
     .run()
