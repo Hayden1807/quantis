@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Quantis - Ajouter une consommation</title>
+    <link rel="stylesheet" href="../css/shared/base.css" />
+    <link rel="stylesheet" href="../css/shared/ui.css" />
+    <link rel="stylesheet" href="../css/shared/components.css" />
+    <link rel="stylesheet" href="../css/add-consumption.css" />
+  </head>
+  <body>
+    <main class="addConsoPage">
+      <a
+        class="addConsoPage__close"
+        href="./dashboard.html"
+        aria-label="Retour au dashboard"
+        >x</a
+      >
+
+      <section class="panel addConsoCard" aria-labelledby="add-conso-title">
+        <header class="panelTop addConsoCard__head">
+          <div>
+            <h1
+              class="panelTop__title addConsoCard__title"
+              id="add-conso-title"
+            >
+              Ajouter une consommation
+            </h1>
+            <p class="addConsoCard__subtitle">
+              Définir un profil et saisir une première consommation.
+            </p>
+          </div>
+        </header>
+
+        <form
+          id="addConsoForm"
+          class="form addConsoForm"
+          action="#"
+          method="post"
+        >
+          <div class="field">
+            <label for="profile_name">Nom du profil de consommation</label>
+            <input
+              id="profile_name"
+              name="profile_name"
+              type="text"
+              placeholder="ex: Maison principale"
+              required
+            />
+          </div>
+
+          <fieldset class="addConsoForm__group">
+            <legend>Ajouter une première conso</legend>
+
+            <div class="addConsoForm__grid">
+              <div class="field">
+                <label for="conso_date">Date</label>
+                <input id="conso_date" name="conso_date" type="date" required />
+              </div>
+
+              <div class="field">
+                <label for="conso_type">Type</label>
+                <select id="conso_type" name="conso_type" required>
+                  <option value="electricite">Electricite</option>
+                  <option value="gaz">Gaz</option>
+                </select>
+              </div>
+
+              <div class="field addConsoForm__value">
+                <label for="conso_value">Valeur (kWh)</label>
+                <input
+                  id="conso_value"
+                  name="conso_value"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  placeholder="ex: 78.1"
+                  required
+                />
+                <div class="hint muted">
+                  Saisir la consommation du jour/période.
+                </div>
+              </div>
+            </div>
+          </fieldset>
+
+          <button
+            class="btn btn--primary form__btn addConsoForm__submit"
+            type="submit"
+          >
+            Enregistrer
+          </button>
+          <pre id="out" style="margin-top: 12px; white-space: pre-wrap"></pre>
+        </form>
+      </section>
+    </main>
+
+    <script>
+      const $ = (s) => document.querySelector(s);
+
+      // default date = today
+      $("#conso_date").value = new Date().toISOString().slice(0, 10);
+
+      function mapEnergy(v) {
+        return v === "gaz" ? "gas" : "electricity";
+      }
+
+      async function apiJson(url, opts) {
+        const res = await fetch(url, { credentials: "include", ...opts });
+        const text = await res.text();
+        let data = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch (_) {}
+        if (!res.ok) {
+          const msg = data ? JSON.stringify(data) : text;
+          throw new Error(`HTTP ${res.status} - ${msg}`);
+        }
+        return data;
+      }
+
+      $("#addConsoForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const out = $("#out");
+        out.textContent = "loading...";
+
+        const profileName = $("#profile_name").value.trim();
+        const date = $("#conso_date").value; // YYYY-MM-DD
+        const typeRaw = $("#conso_type").value;
+        const value = Number($("#conso_value").value);
+
+        if (!profileName) return (out.textContent = "Nom du profil requis");
+        if (!date) return (out.textContent = "Date requise");
+        if (!Number.isFinite(value) || value < 0)
+          return (out.textContent = "Valeur invalide");
+
+        const energy = mapEnergy(typeRaw);
+        const recorded_at = `${date}T00:00:00Z`;
+
+        try {
+          // 1) create place
+          const place = await apiJson("/api/places", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: profileName }),
+          });
+
+          // 2) add first consumption
+          const conso = await apiJson("/api/add-data", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              place_id: place.id,
+              value,
+              unit: "kwh",
+              energy,
+              recorded_at,
+            }),
+          });
+
+          out.textContent =
+            `✅ OK\nPlace créée: ${place.name} (${place.id})\n` +
+            `Conso: ${conso.value} ${conso.unit} - ${conso.energy} - ${conso.recorded_at}\n\n` +
+            `Redirection vers dashboard...`;
+
+          setTimeout(() => {
+            window.location.href = "./dashboard.html";
+          }, 800);
+        } catch (err) {
+          out.textContent = "❌ " + err.message;
+        }
+      });
+    </script>
+  </body>
+  /usr/bin/bash: line 1: q: command not found
+</html>

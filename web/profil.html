@@ -1,0 +1,435 @@
+﻿<?php
+session_start();
+if (!isset($_SESSION["user_id"])) {
+    header("Location: /Quantis/pages/login.php");
+    exit;
+}
+?>
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quantis - Profil</title>
+    <link rel="stylesheet" href="../css/shared/base.css" />
+    <link rel="stylesheet" href="../css/shared/ui.css" />
+    <link rel="stylesheet" href="../css/shared/header.css" />
+    <link rel="stylesheet" href="../css/shared/components.css" />
+    <link rel="stylesheet" href="../css/profil.css" />
+    <script defer src="../js/main.js"></script>
+    <script defer src="../js/profile.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="container topbar__inner">
+        <a class="brand" href="../index.php">
+          <img
+            class="brand__logo"
+            src="../assets/images/QuantisLogo.png"
+            alt="Quantis"
+          />
+          <span class="brand__name">Quantis</span>
+        </a>
+
+        <nav class="nav" aria-label="Navigation principale">
+          <a class="nav__link" href="../index.php">Accueil</a>
+          <a class="nav__link" href="dashboard.html">Dashboard</a>
+          <a class="nav__link" href="hist.php">Historique</a>
+        </nav>
+
+        <div class="profile">
+          <button
+            class="profile__btn"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded="false"
+          >
+            <img
+              class="profile__avatar"
+              src="../assets/images/User.png"
+              alt="Photo de profil"
+            />
+            <span class="profile__label">Profil</span>
+            <span class="profile__chev" aria-hidden="true">▾</span>
+          </button>
+
+          <div class="profile__menu" role="menu" aria-label="Menu profil">
+            <a href="profil.php" role="menuitem">Profil & Parametres</a>
+            <a href="../logout.php" role="menuitem">Deconnexion</a>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="container profilePage">
+      <section class="profilePage__head">
+        <div class="profilePage__title">
+          <h1>Profil & parametres</h1>
+          <p>
+            Gerez votre compte, vos seuils, vos donnees et vos options de
+            partage.
+          </p>
+        </div>
+      </section>
+
+      <section class="profileGrid" aria-label="Sections profil et parametres">
+        <article class="panel profileCard">
+          <header class="panelTop panelTop--compact">
+            <h2 class="panelTop__title">Votre compte</h2>
+          </header>
+          <div class="profileCard__body">
+            <button
+              class="profileAction"
+              type="button"
+              data-modal-open="account"
+            >
+              <div>
+                <span class="profileAction__title">Informations du compte</span>
+                <span class="profileAction__desc"
+                  >Email, identifiant, photo</span
+                >
+              </div>
+              <span class="profileAction__chev">></span>
+            </button>
+
+            <a class="profileAction" href="../logout.php">
+              <div>
+                <span class="profileAction__title">Se deconnecter</span>
+                <span class="profileAction__desc">Deconnexion directe</span>
+              </div>
+              <span class="profileAction__chev">></span>
+            </a>
+          </div>
+        </article>
+
+        <article class="panel profileCard">
+          <header class="panelTop panelTop--compact">
+            <h2 class="panelTop__title">Seuils & alertes</h2>
+          </header>
+          <div class="profileCard__body">
+            <button
+              class="profileAction"
+              type="button"
+              data-modal-open="threshold"
+            >
+              <div>
+                <span class="profileAction__title">Seuils de consommation</span>
+                <span class="profileAction__desc">Definir votre objectif</span>
+              </div>
+              <span class="profileAction__chev">></span>
+            </button>
+
+            <div class="profileRow">
+              <div>
+                <span class="profileRow__title">Alertes de consommation</span>
+                <span class="profileRow__desc"
+                  >Recevoir un rappel automatique</span
+                >
+              </div>
+              <div class="profileRow__controls">
+                <span class="profileRow__status" data-switch-label>On</span>
+                <button
+                  class="switch is-on"
+                  type="button"
+                  data-switch
+                  aria-pressed="true"
+                  aria-label="Activer les alertes"
+                ></button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel profileCard">
+          <header class="panelTop panelTop--compact">
+            <h2 class="panelTop__title">Exporter & donnees</h2>
+          </header>
+          <div class="profileCard__body">
+            <button class="profileAction" type="button">
+              <div>
+                <span class="profileAction__title">Exporter mes donnees</span>
+                <span class="profileAction__desc"
+                  >CSV / JSON (placeholder)</span
+                >
+              </div>
+              <span class="profileAction__chev">></span>
+            </button>
+
+            <button
+              class="profileAction profileAction--danger"
+              type="button"
+              data-modal-open="reset"
+            >
+              <div>
+                <span class="profileAction__title"
+                  >Reinitialiser mes donnees</span
+                >
+                <span class="profileAction__desc">Suppression complete</span>
+              </div>
+              <span class="profileAction__chev">></span>
+            </button>
+          </div>
+        </article>
+
+        <article class="panel profileCard">
+          <header class="panelTop panelTop--compact">
+            <h2 class="panelTop__title">Confidentialite</h2>
+          </header>
+          <div class="profileCard__body">
+            <div class="profileRow">
+              <div>
+                <span class="profileRow__title">Type de profil</span>
+                <span class="profileRow__desc">Public ou prive</span>
+              </div>
+              <div class="profileRow__seg">
+                <div
+                  class="seg"
+                  role="group"
+                  aria-label="Visibilite du profil"
+                  data-seg
+                >
+                  <button
+                    class="seg__btn is-active"
+                    type="button"
+                    aria-pressed="true"
+                  >
+                    Prive
+                  </button>
+                  <button class="seg__btn" type="button" aria-pressed="false">
+                    Public
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <button
+              class="profileAction"
+              type="button"
+              data-modal-open="security"
+            >
+              <div>
+                <span class="profileAction__title">Gestion du compte</span>
+                <span class="profileAction__desc">Changer mot de passe</span>
+              </div>
+              <span class="profileAction__chev">></span>
+            </button>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <div
+      class="modal"
+      data-modal="account"
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-account-title"
+    >
+      <div class="modal__backdrop" data-modal-close></div>
+      <div class="modal__card">
+        <header class="modal__head">
+          <h3 class="modal__title" id="modal-account-title">
+            Informations du compte
+          </h3>
+          <button
+            class="modal__close"
+            type="button"
+            data-modal-close
+            aria-label="Fermer"
+          >
+            x
+          </button>
+        </header>
+        <div class="modal__body">
+          <div class="field">
+            <label for="account-email">Email</label>
+            <input
+              id="account-email"
+              type="email"
+              placeholder="ex: prenom@email.com"
+            />
+          </div>
+          <div class="field">
+            <label for="account-username">Nom d'utilisateur</label>
+            <input
+              id="account-username"
+              type="text"
+              placeholder="ex: utilisateur123"
+            />
+          </div>
+          <div class="field">
+            <label for="account-photo">Image de profil</label>
+            <input
+              id="account-photo"
+              type="text"
+              placeholder="Lien de l'image"
+            />
+          </div>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-modal-close>
+            Annuler
+          </button>
+          <button class="btn btn--primary" type="button">Enregistrer</button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="modal"
+      data-modal="threshold"
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-threshold-title"
+    >
+      <div class="modal__backdrop" data-modal-close></div>
+      <div class="modal__card">
+        <header class="modal__head">
+          <h3 class="modal__title" id="modal-threshold-title">
+            Seuils de consommation
+          </h3>
+          <button
+            class="modal__close"
+            type="button"
+            data-modal-close
+            aria-label="Fermer"
+          >
+            x
+          </button>
+        </header>
+        <div class="modal__body">
+          <div class="field">
+            <label for="threshold-current">Seuil actuel</label>
+            <input
+              id="threshold-current"
+              type="text"
+              value="386 kWh"
+              readonly
+            />
+          </div>
+          <div class="field">
+            <label for="threshold-profile">Profil</label>
+            <select id="threshold-profile">
+              <option>Maison</option>
+              <option>Bureau</option>
+              <option>Appartement</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="threshold-new">Nouveau seuil (kWh)</label>
+            <input
+              id="threshold-new"
+              type="number"
+              step="0.1"
+              placeholder="ex: 420"
+            />
+          </div>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-modal-close>
+            Annuler
+          </button>
+          <button class="btn btn--primary" type="button">Sauvegarder</button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="modal"
+      data-modal="reset"
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-reset-title"
+    >
+      <div class="modal__backdrop" data-modal-close></div>
+      <div class="modal__card">
+        <header class="modal__head">
+          <h3 class="modal__title" id="modal-reset-title">
+            Reinitialiser les donnees
+          </h3>
+          <button
+            class="modal__close"
+            type="button"
+            data-modal-close
+            aria-label="Fermer"
+          >
+            x
+          </button>
+        </header>
+        <div class="modal__body">
+          <p class="muted">
+            Cette action supprime toutes les donnees de consommation. Action
+            irreversible.
+          </p>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-modal-close>
+            Annuler
+          </button>
+          <button class="btn btn--danger" type="button">Confirmer</button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="modal"
+      data-modal="security"
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-security-title"
+    >
+      <div class="modal__backdrop" data-modal-close></div>
+      <div class="modal__card">
+        <header class="modal__head">
+          <h3 class="modal__title" id="modal-security-title">
+            Gestion du compte
+          </h3>
+          <button
+            class="modal__close"
+            type="button"
+            data-modal-close
+            aria-label="Fermer"
+          >
+            x
+          </button>
+        </header>
+        <div class="modal__body">
+          <div class="field">
+            <label for="password-current">Mot de passe actuel</label>
+            <input
+              id="password-current"
+              type="password"
+              placeholder="********"
+            />
+          </div>
+          <div class="field">
+            <label for="password-new">Nouveau mot de passe</label>
+            <input
+              id="password-new"
+              type="password"
+              placeholder="Minimum 8 caracteres"
+            />
+          </div>
+          <div class="field">
+            <label for="password-confirm">Confirmer le mot de passe</label>
+            <input
+              id="password-confirm"
+              type="password"
+              placeholder="Confirmer"
+            />
+          </div>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-modal-close>
+            Annuler
+          </button>
+          <button class="btn btn--primary" type="button">Mettre a jour</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8" />
+<textarea id="t" rows="5" cols="40">salut</textarea>
+<button id="b">send</button>
+<pre id="o"></pre>
+
+<script>
+  b.onclick = async () => {
+    const r = await fetch("/api/echo", { method: "POST", body: t.value });
+    o.textContent = await r.text();
+  };
+</script>
+

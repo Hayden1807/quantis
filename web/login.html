@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Quantis - Connexion</title>
+  <link rel="stylesheet" href="../css/shared/base.css" />
+  <link rel="stylesheet" href="../css/shared/ui.css" />
+  <link rel="stylesheet" href="../css/log.css" />
+</head>
+<body>
+
+<main class="login">
+  <a class="login__close" href="../index.html" aria-label="Retour a l'accueil">x</a>
+
+  <section class="login__panel">
+    <div class="login__brand">
+      <img src="../assets/images/QuantisLogo.png" alt="Logo Quantis" />
+      <span>Quantis</span>
+    </div>
+
+    <header class="login__head">
+      <h1>Connexion</h1>
+      <p>Entrez vos identifiants (email + mot de passe).</p>
+    </header>
+
+    <p class="error" id="errorBox" hidden></p>
+
+    <form class="login__form" id="loginForm">
+      <label class="field">
+        <span>Email</span>
+        <input id="email" type="email" name="email" placeholder="ex: prenom.nom@email.com" required />
+      </label>
+
+      <label class="field">
+        <span>Mot de passe</span>
+        <input id="password" type="password" name="password" placeholder="minimum 6 caracteres" minlength="6" required />
+      </label>
+
+      <div class="login__row">
+        <label class="check">
+          <input id="remember" type="checkbox" name="remember" />
+          <span>Se souvenir de moi</span>
+        </label>
+        <a class="login__link" href="#">Mot de passe oublie ?</a>
+      </div>
+
+      <button class="btn btn--primary" id="btn" type="submit">Se connecter</button>
+
+      <div class="login__divider">
+        <span>ou</span>
+      </div>
+
+      <a class="btn btn--ghost" href="./Register.html">Creer un compte</a>
+
+      <pre id="out" style="white-space: pre-wrap; margin-top: 1rem;"></pre>
+    </form>
+  </section>
+</main>
+
+<script>
+  const API_LOGIN_URL = "/api/login";
+
+  const form = document.getElementById("loginForm");
+  const emailInput = document.getElementById("email");
+  const passwordInput = document.getElementById("password");
+  const rememberInput = document.getElementById("remember");
+  const button = document.getElementById("btn");
+  const out = document.getElementById("out");
+  const errorBox = document.getElementById("errorBox");
+
+  function showError(message) {
+    errorBox.textContent = message;
+    errorBox.hidden = false;
+  }
+
+  function clearError() {
+    errorBox.textContent = "";
+    errorBox.hidden = true;
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    clearError();
+    out.textContent = "loading...";
+    button.disabled = true;
+
+    try {
+      const res = await fetch(API_LOGIN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: emailInput.value,
+          password: passwordInput.value,
+          remember: rememberInput.checked,
+        }),
+      });
+
+      const raw = await res.text();
+      out.textContent = `HTTP ${res.status}\n${raw}`;
+
+      let data = null;
+      try {
+        data = JSON.parse(raw);
+      } catch (_) {}
+
+      if (res.ok && data) {
+        const token = data.token || data.access_token || data.jwt;
+        if (token) {
+          localStorage.setItem("auth_token", token);
+        }
+
+        if (data.user) {
+          localStorage.setItem("auth_user", JSON.stringify(data.user));
+        }
+
+        if (data.redirect_to) {
+          window.location.href = data.redirect_to;
+          return;
+        }
+      }
+
+      if (!res.ok) {
+        const message = data?.error || data?.message || "Connexion impossible.";
+        showError(message);
+      }
+    } catch (error) {
+      out.textContent = "Network error";
+      showError("Erreur reseau: impossible de joindre l'API.");
+      console.error(error);
+    } finally {
+      button.disabled = false;
+    }
+  });
+</script>
+
+</body>
+</html>

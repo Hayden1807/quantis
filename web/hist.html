@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quantis — Historique</title>
+
+    <!-- Shared -->
+    <link rel="stylesheet" href="../css/shared/base.css" />
+    <link rel="stylesheet" href="../css/shared/ui.css" />
+    <link rel="stylesheet" href="../css/shared/header.css" />
+    <link rel="stylesheet" href="../css/shared/components.css" />
+
+    <!-- Page layout -->
+    <link rel="stylesheet" href="../css/historique.css" />
+  </head>
+  <body>
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="container topbar__inner">
+        <a class="brand" href="../index.html">
+          <img
+            class="brand__logo"
+            src="../assets/images/QuantisLogo.png"
+            alt="Quantis"
+          />
+          <span class="brand__name">Quantis</span>
+        </a>
+
+        <nav class="nav" aria-label="Navigation principale">
+          <a class="nav__link" href="../index.html">Accueil</a>
+          <a class="nav__link" href="dashboard.html">Dashboard</a>
+          <a class="nav__link active" href="hist.html">Historique</a>
+        </nav>
+
+        <div class="profile">
+          <button
+            class="profile__btn"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded="false"
+          >
+            <img
+              class="profile__avatar"
+              src="../assets/images/User.png"
+              alt="Photo de profil"
+            />
+            <span class="profile__label">Profil</span>
+            <span class="profile__chev" aria-hidden="true">▾</span>
+          </button>
+
+          <div class="profile__menu" role="menu" aria-label="Menu profil">
+            <a href="profil.html" role="menuitem">Profil & Parametres</a>
+            <button
+              id="logoutBtn"
+              class="linklike"
+              type="button"
+              role="menuitem"
+            >
+              Déconnexion
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="container hist">
+      <!-- Header page -->
+      <section class="hist__head">
+        <div class="hist__actionsLeft">
+          <a class="btn btn--ghost" href="#" id="btnExportCsv" download
+            >Exporter (CSV)</a
+          >
+        </div>
+
+        <div class="hist__title">
+          <h1>
+            Historique : <span class="hist__scope" id="histScope">—</span>
+          </h1>
+          <p>Retrouve toutes tes saisies, filtre par période et par type.</p>
+          <p
+            id="authMsg"
+            class="muted"
+            style="display: none; margin-top: 8px"
+          ></p>
+        </div>
+
+        <div class="hist__actionsRight">
+          <div class="select select--center">
+            <select id="histPlaceSelect" aria-label="Lieu"></select>
+          </div>
+          <a
+            class="btn btn--ghost hist__exportTop"
+            href="#"
+            id="btnExportCsvTop"
+            download
+            >Exporter (CSV)</a
+          >
+        </div>
+      </section>
+
+      <!-- Filters -->
+      <section class="panel histFilters" aria-label="Filtres historique">
+        <header class="panelTop panelTop--compact">
+          <h2 class="panelTop__title">Filtres</h2>
+
+          <div class="panelTop__right">
+            <div class="seg" role="group" aria-label="Type énergie">
+              <button id="fEnergyAll" class="seg__btn is-active" type="button">
+                Tous
+              </button>
+              <button id="fEnergyElec" class="seg__btn" type="button">
+                Électricité
+              </button>
+              <button id="fEnergyGas" class="seg__btn" type="button">
+                Gaz
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <div class="histFilters__body">
+          <div class="histFilters__grid">
+            <div class="field">
+              <label for="from">Du</label>
+              <input id="from" type="date" />
+            </div>
+
+            <div class="field">
+              <label for="to">Au</label>
+              <input id="to" type="date" />
+            </div>
+
+            <div class="field">
+              <label for="status">Statut</label>
+              <select id="status">
+                <option value="all">Tous</option>
+                <option value="ok">OK</option>
+                <option value="watch">À surveiller</option>
+                <option value="alert">Alerte</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="q">Recherche</label>
+              <input
+                id="q"
+                type="text"
+                placeholder="ex: gaz, 12.2, 15/01/2026…"
+              />
+            </div>
+
+            <div class="histFilters__cta">
+              <button id="btnApply" class="btn btn--primary" type="button">
+                Appliquer
+              </button>
+              <button id="btnReset" class="btn btn--ghost" type="button">
+                Réinitialiser
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Table only -->
+      <section class="hist__grid">
+        <article class="panel panel--big">
+          <header class="panelTop">
+            <div class="panelTop__left">
+              <h2 class="panelTop__title">Toutes les saisies</h2>
+              <span class="muted hist__count" id="histCount">0 résultats</span>
+            </div>
+
+            <div class="panelTop__right">
+              <div class="select select--center">
+                <select id="sortSelect" aria-label="Tri">
+                  <option value="desc" selected>Plus récent</option>
+                  <option value="asc">Plus ancien</option>
+                </select>
+              </div>
+            </div>
+          </header>
+
+          <div
+            class="tableWrap"
+            role="region"
+            aria-label="Tableau historique des saisies"
+          >
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th>Valeur</th>
+                  <th>Statut</th>
+                </tr>
+              </thead>
+              <tbody id="histTbody"></tbody>
+            </table>
+          </div>
+
+          <div class="histPager">
+            <button id="btnPrev" class="btn btn--ghost" type="button">
+              ← Précédent
+            </button>
+            <div class="histPager__meta muted" id="pageMeta">
+              Page <strong>1</strong>
+            </div>
+            <button id="btnNext" class="btn btn--ghost" type="button">
+              Suivant →
+            </button>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <style>
+      .linklike {
+        background: none;
+        border: none;
+        padding: 0;
+        margin: 0;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+        font: inherit;
+        width: 100%;
+      }
+    </style>
+
+    <script>
+      const $ = (s) => document.querySelector(s);
+
+      let currentPlaceId = null;
+      let energy = "all"; // all | electricity | gas
+      let page = 1;
+      const limit = 50;
+
+      function showAuthMsg(text) {
+        const el = $("#authMsg");
+        if (!el) return;
+        el.style.display = "";
+        el.textContent = text || "Non authentifié. Connecte-toi.";
+      }
+
+      async function apiGet(url) {
+        const res = await fetch(url, { credentials: "include" });
+        if (res.status === 401) {
+          showAuthMsg("Non authentifié (401). Va sur login puis reviens.");
+          throw new Error("unauthorized");
+        }
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      }
+
+      function setEnergyButtons(active) {
+        $("#fEnergyAll").classList.toggle("is-active", active === "all");
+        $("#fEnergyElec").classList.toggle(
+          "is-active",
+          active === "electricity",
+        );
+        $("#fEnergyGas").classList.toggle("is-active", active === "gas");
+      }
+
+      function fmtDateFR(yyyyMmDd) {
+        const d = new Date(yyyyMmDd + "T00:00:00Z");
+        if (Number.isNaN(d.getTime())) return yyyyMmDd;
+        return d.toLocaleDateString("fr-FR");
+      }
+
+      function energyLabel(e) {
+        return e === "gas" ? "Gaz" : "Élec";
+      }
+
+      function statusDot(s) {
+        if (s === "alert")
+          return `<span class="dot dot--red" title="Alerte"></span>`;
+        if (s === "watch")
+          return `<span class="dot dot--orange" title="À surveiller"></span>`;
+        return `<span class="dot dot--green" title="OK"></span>`;
+      }
+
+      async function loadPlaces() {
+        const places = await apiGet("/api/places");
+        const sel = $("#histPlaceSelect");
+        sel.innerHTML = "";
+
+        for (const p of places) {
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.textContent = p.name;
+          sel.appendChild(opt);
+        }
+
+        if (places.length) {
+          currentPlaceId = places[0].id;
+          sel.value = currentPlaceId;
+          $("#histScope").textContent = places[0].name;
+        } else {
+          currentPlaceId = null;
+          $("#histScope").textContent = "—";
+        }
+
+        sel.onchange = async () => {
+          currentPlaceId = sel.value;
+          $("#histScope").textContent =
+            sel.options[sel.selectedIndex]?.textContent || "—";
+          page = 1;
+          await loadHistory();
+        };
+      }
+
+      function buildHistoryUrl() {
+        const from = $("#from").value; // YYYY-MM-DD
+        const to = $("#to").value; // YYYY-MM-DD
+        const status = $("#status").value || "all";
+        const sort = $("#sortSelect").value || "desc";
+
+        const params = new URLSearchParams();
+        params.set("place_id", currentPlaceId);
+        if (from) params.set("from", from);
+        if (to) params.set("to", to);
+        params.set("energy", energy);
+        params.set("status", status);
+        params.set("page", String(page));
+        params.set("limit", String(limit));
+        params.set("sort", sort);
+
+        return "/api/history?" + params.toString();
+      }
+
+      function applyClientSearchFilter(items) {
+        // prototype: filtre local sur les lignes reçues (backend ne supporte pas encore q)
+        const q = ($("#q").value || "").trim().toLowerCase();
+        if (!q) return items;
+
+        return items.filter((it) => {
+          const date = it.day?.toLowerCase?.() || "";
+          const type = it.energy?.toLowerCase?.() || "";
+          const val = String(it.total_kwh ?? "").toLowerCase();
+          const st = it.status?.toLowerCase?.() || "";
+          return (
+            date.includes(q) ||
+            type.includes(q) ||
+            val.includes(q) ||
+            st.includes(q)
+          );
+        });
+      }
+
+      async function loadHistory() {
+        if (!currentPlaceId) return;
+
+        const data = await apiGet(buildHistoryUrl());
+        // data = { page, limit, total, items: [{day, energy, total_kwh, goal_kwh, status}] }
+
+        // filtre local "q" (prototype)
+        const items = applyClientSearchFilter(data.items);
+
+        $("#histCount").textContent = `${data.total} résultats`;
+        $("#pageMeta").innerHTML = `Page <strong>${data.page}</strong>`;
+
+        const tbody = $("#histTbody");
+        tbody.innerHTML = "";
+
+        for (const row of items) {
+          const tr = document.createElement("tr");
+
+          const tdDate = document.createElement("td");
+          tdDate.textContent = fmtDateFR(row.day);
+
+          const tdType = document.createElement("td");
+          tdType.textContent = energyLabel(row.energy);
+
+          const tdVal = document.createElement("td");
+          tdVal.textContent = `${Number(row.total_kwh).toFixed(1)} kWh`;
+
+          const tdStatus = document.createElement("td");
+          tdStatus.innerHTML = statusDot(row.status);
+
+          tr.appendChild(tdDate);
+          tr.appendChild(tdType);
+          tr.appendChild(tdVal);
+          tr.appendChild(tdStatus);
+
+          tbody.appendChild(tr);
+        }
+
+        // pagination
+        $("#btnPrev").disabled = data.page <= 1;
+        const maxPage = Math.max(1, Math.ceil(data.total / data.limit));
+        $("#btnNext").disabled = data.page >= maxPage;
+
+        // CSV export simple (client-side) basé sur items affichés
+        const csvLines = [
+          "date,energy,total_kwh,status",
+          ...items.map(
+            (r) =>
+              `${r.day},${r.energy},${Number(r.total_kwh).toFixed(2)},${r.status}`,
+          ),
+        ];
+        const blob = new Blob([csvLines.join("\n")], {
+          type: "text/csv;charset=utf-8",
+        });
+        const url = URL.createObjectURL(blob);
+        $("#btnExportCsv").href = url;
+        $("#btnExportCsvTop").href = url;
+        $("#btnExportCsv").download = "history.csv";
+        $("#btnExportCsvTop").download = "history.csv";
+      }
+
+      function bindUi() {
+        $("#fEnergyAll").onclick = async () => {
+          energy = "all";
+          setEnergyButtons(energy);
+          page = 1;
+          await loadHistory();
+        };
+        $("#fEnergyElec").onclick = async () => {
+          energy = "electricity";
+          setEnergyButtons(energy);
+          page = 1;
+          await loadHistory();
+        };
+        $("#fEnergyGas").onclick = async () => {
+          energy = "gas";
+          setEnergyButtons(energy);
+          page = 1;
+          await loadHistory();
+        };
+
+        $("#btnApply").onclick = async () => {
+          page = 1;
+          await loadHistory();
+        };
+
+        $("#btnReset").onclick = async () => {
+          energy = "all";
+          setEnergyButtons(energy);
+          $("#status").value = "all";
+          $("#q").value = "";
+          // reset dates: 30 derniers jours
+          const to = new Date();
+          const from = new Date();
+          from.setDate(from.getDate() - 29);
+          $("#to").value = to.toISOString().slice(0, 10);
+          $("#from").value = from.toISOString().slice(0, 10);
+
+          page = 1;
+          await loadHistory();
+        };
+
+        $("#sortSelect").onchange = async () => {
+          page = 1;
+          await loadHistory();
+        };
+        $("#btnPrev").onclick = async () => {
+          if (page > 1) {
+            page--;
+            await loadHistory();
+          }
+        };
+        $("#btnNext").onclick = async () => {
+          page++;
+          await loadHistory();
+        };
+
+        // recherche locale (prototype)
+        $("#q").addEventListener("input", async () => {
+          await loadHistory();
+        });
+      }
+
+      function bindLogout() {
+        const btn = $("#logoutBtn");
+        if (!btn) return;
+        btn.addEventListener("click", async () => {
+          try {
+            const res = await fetch("/api/logout", {
+              method: "POST",
+              credentials: "include",
+            });
+            if (res.ok) window.location.href = "/login.html";
+            else alert("Logout failed: " + (await res.text()));
+          } catch (e) {
+            alert("Logout error: " + e.message);
+          }
+        });
+      }
+
+      (async function init() {
+        try {
+          // default dates: last 30 days
+          const to = new Date();
+          const from = new Date();
+          from.setDate(from.getDate() - 29);
+          $("#to").value = to.toISOString().slice(0, 10);
+          $("#from").value = from.toISOString().slice(0, 10);
+
+          setEnergyButtons(energy);
+          bindUi();
+          bindLogout();
+
+          await loadPlaces();
+          await loadHistory();
+        } catch (e) {
+          if (e.message !== "unauthorized") console.error(e);
+        }
+      })();
+    </script>
+  </body>
+</html>
