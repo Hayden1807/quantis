@@ -26,8 +26,8 @@
 
         <nav class="nav" aria-label="Navigation principale">
           <a class="nav__link active" href="index.html">Accueil</a>
-          <a class="nav__link" href="/dashboard.html">Dashboard</a>
-          <a class="nav__link" href="/hist.html">Historique</a>
+          <a class="nav__link" href="/dashboard.html" data-auth-required>Dashboard</a>
+          <a class="nav__link" href="/hist.html" data-auth-required>Historique</a>
         </nav>
 
         <div class="profile">
@@ -47,11 +47,11 @@
           </button>
 
           <div class="profile__menu" role="menu" aria-label="Menu profil">
-            <a role="menuitem" href="/profil.html">Profil & Parametres</a>
-            <a role="menuitem" href="/dashboard.html">Mes Dashboards</a>
-            <a role="menuitem" href="logout.html">Déconnexion</a>
-            <a role="menuitem" href="/login.html">Connexion</a>
-            <a role="menuitem" href="/Register.html">Inscription</a>
+            <a role="menuitem" href="/profil.html" data-auth-required>Profil & Parametres</a>
+            <a role="menuitem" href="/dashboard.html" data-auth-required>Mes Dashboards</a>
+            <a role="menuitem" href="#" id="logoutLink" hidden>Déconnexion</a>
+            <a role="menuitem" href="/login" id="loginLink">Connexion</a>
+            <a role="menuitem" href="/Register.html" id="registerLink">Inscription</a>
           </div>
         </div>
       </div>
@@ -73,16 +73,16 @@
             </p>
 
             <div class="hero__actions">
-              <a class="btn btn--primary" href="/add-data.html">
+              <a class="btn btn--primary" href="/add-data.html" data-auth-required>
                 + Ajouter une consommation
               </a>
-              <a class="btn btn--ghost" href="/dashboard.html"
+              <a class="btn btn--ghost" href="/dashboard.html" data-auth-required
                 >Voir le dashboard</a
               >
               <a class="btn btn--primary" href="/Register.html">
                 Commencer maintenant
               </a>
-              <a class="btn btn--ghost" href="/login.html">Se connecter</a>
+              <a class="btn btn--ghost" href="/login" id="heroLoginLink">Se connecter</a>
             </div>
           </div>
 

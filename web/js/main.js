@@ -35,4 +35,55 @@ document.addEventListener("DOMContentLoaded", () => {
     if (canHover) return;
     if (e.key === "Escape") close();
   });
+
+  const loginPath = "/login";
+  const currentPath = window.location.pathname + window.location.search;
+  const loginHref = `${loginPath}?next=${encodeURIComponent(currentPath)}`;
+
+  function applyAuthLinks(isAuthenticated) {
+    const protectedLinks = document.querySelectorAll("[data-auth-required]");
+    protectedLinks.forEach((link) => {
+      const target =
+        link.dataset.protectedHref || link.getAttribute("href");
+      if (!target) return;
+      link.dataset.protectedHref = target;
+      link.setAttribute("href", isAuthenticated ? target : loginHref);
+    });
+
+    const loginLink = document.getElementById("loginLink");
+    const heroLoginLink = document.getElementById("heroLoginLink");
+    const registerLink = document.getElementById("registerLink");
+    const logoutLink = document.getElementById("logoutLink");
+
+    if (loginLink) loginLink.hidden = isAuthenticated;
+    if (heroLoginLink) heroLoginLink.hidden = isAuthenticated;
+    if (registerLink) registerLink.hidden = isAuthenticated;
+    if (logoutLink) logoutLink.hidden = !isAuthenticated;
+  }
+
+  async function detectAuthState() {
+    try {
+      const res = await fetch("/api/me", { credentials: "include" });
+      applyAuthLinks(res.ok);
+    } catch (_) {
+      applyAuthLinks(false);
+    }
+  }
+
+  const logoutLink = document.getElementById("logoutLink");
+  if (logoutLink) {
+    logoutLink.addEventListener("click", async (e) => {
+      e.preventDefault();
+      try {
+        await fetch("/api/logout", {
+          method: "POST",
+          credentials: "include",
+        });
+      } finally {
+        window.location.href = "/login";
+      }
+    });
+  }
+
+  detectAuthState();
 });

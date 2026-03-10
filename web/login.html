@@ -69,6 +69,14 @@
   const out = document.getElementById("out");
   const errorBox = document.getElementById("errorBox");
 
+  function getSafeNextUrl() {
+    const next = new URLSearchParams(window.location.search).get("next");
+    if (!next || !next.startsWith("/") || next.startsWith("//")) {
+      return "/index.html";
+    }
+    return next;
+  }
+
   function showError(message) {
     errorBox.textContent = message;
     errorBox.hidden = false;
@@ -118,6 +126,9 @@
           window.location.href = data.redirect_to;
           return;
         }
+
+        window.location.href = getSafeNextUrl();
+        return;
       }
 
       if (!res.ok) {

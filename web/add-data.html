@@ -108,6 +108,11 @@
 
       async function apiJson(url, opts) {
         const res = await fetch(url, { credentials: "include", ...opts });
+        if (res.status === 401) {
+          const next = window.location.pathname + window.location.search;
+          window.location.href = `/login?next=${encodeURIComponent(next)}`;
+          throw new Error("HTTP 401 - unauthorized");
+        }
         const text = await res.text();
         let data = null;
         try {

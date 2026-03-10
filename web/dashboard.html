@@ -347,12 +347,18 @@
         el.textContent = text || "Non authentifié. Va sur la page login.";
       }
 
+      function redirectToLogin() {
+        const next = window.location.pathname + window.location.search;
+        window.location.href = `/login?next=${encodeURIComponent(next)}`;
+      }
+
       async function apiGet(url) {
         const res = await fetch(url, { credentials: "include" });
         if (res.status === 401) {
           showAuthMsg(
             "Non authentifié (401). Connecte-toi puis reviens sur le dashboard.",
           );
+          redirectToLogin();
           throw new Error("unauthorized");
         }
         if (!res.ok) throw new Error(await res.text());
@@ -370,6 +376,7 @@
           showAuthMsg(
             "Non authentifié (401). Connecte-toi puis reviens sur le dashboard.",
           );
+          redirectToLogin();
           throw new Error("unauthorized");
         }
         const text = await res.text();
@@ -674,7 +681,7 @@
             });
             if (res.ok) {
               // UX: redirect login
-              window.location.href = "/login.html";
+              window.location.href = "/login";
             } else {
               alert("Logout failed: " + (await res.text()));
             }

@@ -243,10 +243,16 @@
         el.textContent = text || "Non authentifié. Connecte-toi.";
       }
 
+      function redirectToLogin() {
+        const next = window.location.pathname + window.location.search;
+        window.location.href = `/login?next=${encodeURIComponent(next)}`;
+      }
+
       async function apiGet(url) {
         const res = await fetch(url, { credentials: "include" });
         if (res.status === 401) {
           showAuthMsg("Non authentifié (401). Va sur login puis reviens.");
+          redirectToLogin();
           throw new Error("unauthorized");
         }
         if (!res.ok) throw new Error(await res.text());
@@ -480,7 +486,7 @@
               method: "POST",
               credentials: "include",
             });
-            if (res.ok) window.location.href = "/login.html";
+            if (res.ok) window.location.href = "/login";
             else alert("Logout failed: " + (await res.text()));
           } catch (e) {
             alert("Logout error: " + e.message);
