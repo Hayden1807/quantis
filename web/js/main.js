@@ -40,6 +40,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const currentPath = window.location.pathname + window.location.search;
   const loginHref = `${loginPath}?next=${encodeURIComponent(currentPath)}`;
 
+  function setVisibility(el, visible) {
+    if (!el) return;
+    el.hidden = !visible;
+    el.style.display = visible ? (el.dataset.display || "") : "none";
+  }
+
   function applyAuthLinks(isAuthenticated) {
     const protectedLinks = document.querySelectorAll("[data-auth-required]");
     protectedLinks.forEach((link) => {
@@ -51,10 +57,10 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     document.querySelectorAll("[data-auth-visible]").forEach((el) => {
-      el.hidden = !isAuthenticated;
+      setVisibility(el, isAuthenticated);
     });
     document.querySelectorAll("[data-guest-visible]").forEach((el) => {
-      el.hidden = isAuthenticated;
+      setVisibility(el, !isAuthenticated);
     });
   }
 

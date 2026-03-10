@@ -124,16 +124,24 @@
   transition: opacity 160ms ease, transform 160ms ease, visibility 160ms ease;
 }
 
-.profile__menu a{
+.profile__menu a,
+.profile__menu button{
   display: block;
+  width: 100%;
   padding: 10px 10px;
   border-radius: 12px;
+  border: none;
+  background: transparent;
   color: var(--muted);
   font-weight: 600;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   transition: background 160ms ease, color 160ms ease;
 }
 
-.profile__menu a:hover{
+.profile__menu a:hover,
+.profile__menu button:hover{
   background: rgba(255,255,255,0.08);
   color: var(--text);
 }

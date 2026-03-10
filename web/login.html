@@ -34,7 +34,7 @@
 
       <label class="field">
         <span>Mot de passe</span>
-        <input id="password" type="password" name="password" placeholder="minimum 6 caracteres" minlength="6" required />
+        <input id="password" type="password" name="password" placeholder="minimum 10 caracteres" minlength="10" required />
       </label>
 
       <div class="login__row">
@@ -96,6 +96,7 @@
     try {
       const res = await fetch(API_LOGIN_URL, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: emailInput.value,

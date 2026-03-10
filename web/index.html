@@ -26,20 +26,10 @@
 
         <nav class="nav" aria-label="Navigation principale">
           <a class="nav__link active" href="index.html">Accueil</a>
-          <a
-            class="nav__link"
-            href="/dashboard.html"
-            data-auth-required
-            data-auth-visible
-            hidden
+          <a class="nav__link" href="/dashboard.html" data-auth-required
             >Dashboard</a
           >
-          <a
-            class="nav__link"
-            href="/hist.html"
-            data-auth-required
-            data-auth-visible
-            hidden
+          <a class="nav__link" href="/hist.html" data-auth-required
             >Historique</a
           >
         </nav>
@@ -66,7 +56,7 @@
               href="/profil.html"
               data-auth-required
               data-auth-visible
-              hidden
+              data-display="block"
               >Profil & Parametres</a
             >
             <a
@@ -74,13 +64,23 @@
               href="/dashboard.html"
               data-auth-required
               data-auth-visible
-              hidden
+              data-display="block"
               >Mes Dashboards</a
             >
-            <a role="menuitem" href="#" id="logoutLink" data-auth-visible hidden
+            <a
+              role="menuitem"
+              href="#"
+              id="logoutLink"
+              data-auth-visible
+              data-display="block"
               >Déconnexion</a
             >
-            <a role="menuitem" href="/login" id="loginLink" data-guest-visible
+            <a
+              role="menuitem"
+              href="/login"
+              id="loginLink"
+              data-guest-visible
+              data-display="block"
               >Connexion</a
             >
             <a
@@ -88,6 +88,7 @@
               href="/Register.html"
               id="registerLink"
               data-guest-visible
+              data-display="block"
               >Inscription</a
             >
           </div>
@@ -116,7 +117,7 @@
                 href="/add-data.html"
                 data-auth-required
                 data-auth-visible
-                hidden
+                data-display="inline-flex"
               >
                 + Ajouter une consommation
               </a>
@@ -125,7 +126,7 @@
                 href="/dashboard.html"
                 data-auth-required
                 data-auth-visible
-                hidden
+                data-display="inline-flex"
                 >Voir le dashboard</a
               >
               <a
@@ -133,6 +134,7 @@
                 href="/Register.html"
                 id="heroRegisterLink"
                 data-guest-visible
+                data-display="inline-flex"
               >
                 Commencer maintenant
               </a>
@@ -141,6 +143,7 @@
                 href="/login"
                 id="heroLoginLink"
                 data-guest-visible
+                data-display="inline-flex"
                 >Se connecter</a
               >
             </div>

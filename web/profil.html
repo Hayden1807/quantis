@@ -1,10 +1,3 @@
-﻿<?php
-session_start();
-if (!isset($_SESSION["user_id"])) {
-    header("Location: /Quantis/pages/login.php");
-    exit;
-}
-?>
 <!doctype html>
 <html lang="fr">
   <head>
@@ -22,7 +15,7 @@ if (!isset($_SESSION["user_id"])) {
   <body>
     <header class="topbar">
       <div class="container topbar__inner">
-        <a class="brand" href="../index.php">
+        <a class="brand" href="../index.html">
           <img
             class="brand__logo"
             src="../assets/images/QuantisLogo.png"
@@ -32,9 +25,9 @@ if (!isset($_SESSION["user_id"])) {
         </a>
 
         <nav class="nav" aria-label="Navigation principale">
-          <a class="nav__link" href="../index.php">Accueil</a>
+          <a class="nav__link" href="../index.html">Accueil</a>
           <a class="nav__link" href="dashboard.html">Dashboard</a>
-          <a class="nav__link" href="hist.php">Historique</a>
+          <a class="nav__link" href="hist.html">Historique</a>
         </nav>
 
         <div class="profile">
@@ -54,8 +47,15 @@ if (!isset($_SESSION["user_id"])) {
           </button>
 
           <div class="profile__menu" role="menu" aria-label="Menu profil">
-            <a href="profil.php" role="menuitem">Profil & Parametres</a>
-            <a href="../logout.php" role="menuitem">Deconnexion</a>
+            <a href="profil.html" role="menuitem">Profil & Parametres</a>
+            <button
+              id="logoutBtn"
+              class="linklike"
+              type="button"
+              role="menuitem"
+            >
+              Déconnexion
+            </button>
           </div>
         </div>
       </div>
@@ -92,13 +92,13 @@ if (!isset($_SESSION["user_id"])) {
               <span class="profileAction__chev">></span>
             </button>
 
-            <a class="profileAction" href="../logout.php">
+            <button class="profileAction" id="logoutCardBtn" type="button">
               <div>
                 <span class="profileAction__title">Se deconnecter</span>
                 <span class="profileAction__desc">Deconnexion directe</span>
               </div>
               <span class="profileAction__chev">></span>
-            </a>
+            </button>
           </div>
         </article>
 
@@ -431,5 +431,48 @@ if (!isset($_SESSION["user_id"])) {
         </div>
       </div>
     </div>
+
+    <style>
+      .linklike {
+        background: none;
+        border: none;
+        padding: 0;
+        margin: 0;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+        font: inherit;
+        width: 100%;
+      }
+    </style>
+
+    <script>
+      function bindLogout() {
+        const logoutTargets = [
+          document.getElementById("logoutBtn"),
+          document.getElementById("logoutCardBtn"),
+        ].filter(Boolean);
+
+        logoutTargets.forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            try {
+              const res = await fetch("/api/logout", {
+                method: "POST",
+                credentials: "include",
+              });
+              if (res.ok) {
+                window.location.href = "/login";
+              } else {
+                alert("Logout failed: " + (await res.text()));
+              }
+            } catch (e) {
+              alert("Logout error: " + e.message);
+            }
+          });
+        });
+      }
+
+      bindLogout();
+    </script>
   </body>
 </html>
