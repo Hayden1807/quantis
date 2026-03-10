@@ -50,15 +50,12 @@ document.addEventListener("DOMContentLoaded", () => {
       link.setAttribute("href", isAuthenticated ? target : loginHref);
     });
 
-    const loginLink = document.getElementById("loginLink");
-    const heroLoginLink = document.getElementById("heroLoginLink");
-    const registerLink = document.getElementById("registerLink");
-    const logoutLink = document.getElementById("logoutLink");
-
-    if (loginLink) loginLink.hidden = isAuthenticated;
-    if (heroLoginLink) heroLoginLink.hidden = isAuthenticated;
-    if (registerLink) registerLink.hidden = isAuthenticated;
-    if (logoutLink) logoutLink.hidden = !isAuthenticated;
+    document.querySelectorAll("[data-auth-visible]").forEach((el) => {
+      el.hidden = !isAuthenticated;
+    });
+    document.querySelectorAll("[data-guest-visible]").forEach((el) => {
+      el.hidden = isAuthenticated;
+    });
   }
 
   async function detectAuthState() {

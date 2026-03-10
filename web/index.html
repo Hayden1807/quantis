@@ -26,8 +26,22 @@
 
         <nav class="nav" aria-label="Navigation principale">
           <a class="nav__link active" href="index.html">Accueil</a>
-          <a class="nav__link" href="/dashboard.html" data-auth-required>Dashboard</a>
-          <a class="nav__link" href="/hist.html" data-auth-required>Historique</a>
+          <a
+            class="nav__link"
+            href="/dashboard.html"
+            data-auth-required
+            data-auth-visible
+            hidden
+            >Dashboard</a
+          >
+          <a
+            class="nav__link"
+            href="/hist.html"
+            data-auth-required
+            data-auth-visible
+            hidden
+            >Historique</a
+          >
         </nav>
 
         <div class="profile">
@@ -47,11 +61,35 @@
           </button>
 
           <div class="profile__menu" role="menu" aria-label="Menu profil">
-            <a role="menuitem" href="/profil.html" data-auth-required>Profil & Parametres</a>
-            <a role="menuitem" href="/dashboard.html" data-auth-required>Mes Dashboards</a>
-            <a role="menuitem" href="#" id="logoutLink" hidden>Déconnexion</a>
-            <a role="menuitem" href="/login" id="loginLink">Connexion</a>
-            <a role="menuitem" href="/Register.html" id="registerLink">Inscription</a>
+            <a
+              role="menuitem"
+              href="/profil.html"
+              data-auth-required
+              data-auth-visible
+              hidden
+              >Profil & Parametres</a
+            >
+            <a
+              role="menuitem"
+              href="/dashboard.html"
+              data-auth-required
+              data-auth-visible
+              hidden
+              >Mes Dashboards</a
+            >
+            <a role="menuitem" href="#" id="logoutLink" data-auth-visible hidden
+              >Déconnexion</a
+            >
+            <a role="menuitem" href="/login" id="loginLink" data-guest-visible
+              >Connexion</a
+            >
+            <a
+              role="menuitem"
+              href="/Register.html"
+              id="registerLink"
+              data-guest-visible
+              >Inscription</a
+            >
           </div>
         </div>
       </div>
@@ -73,16 +111,38 @@
             </p>
 
             <div class="hero__actions">
-              <a class="btn btn--primary" href="/add-data.html" data-auth-required>
+              <a
+                class="btn btn--primary"
+                href="/add-data.html"
+                data-auth-required
+                data-auth-visible
+                hidden
+              >
                 + Ajouter une consommation
               </a>
-              <a class="btn btn--ghost" href="/dashboard.html" data-auth-required
+              <a
+                class="btn btn--ghost"
+                href="/dashboard.html"
+                data-auth-required
+                data-auth-visible
+                hidden
                 >Voir le dashboard</a
               >
-              <a class="btn btn--primary" href="/Register.html">
+              <a
+                class="btn btn--primary"
+                href="/Register.html"
+                id="heroRegisterLink"
+                data-guest-visible
+              >
                 Commencer maintenant
               </a>
-              <a class="btn btn--ghost" href="/login" id="heroLoginLink">Se connecter</a>
+              <a
+                class="btn btn--ghost"
+                href="/login"
+                id="heroLoginLink"
+                data-guest-visible
+                >Se connecter</a
+              >
             </div>
           </div>
 
