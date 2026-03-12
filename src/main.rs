@@ -24,6 +24,8 @@ use actix_web::cookie::{Cookie, SameSite};
 use actix_web::cookie::time::Duration as CookieDuration;
 use time::Duration as TimeDuration; // as to avoid conflict
 
+use time::{format_description::well_known::Rfc3339};
+
 // sign up struct
 #[derive(Deserialize)]
 struct SignupReq {
@@ -569,16 +571,36 @@ async fn add_data(req: HttpRequest, state: web::Data<AppState>, body: web::Json<
         return HttpResponse::BadRequest().body("invalid energy type");
     }
 
+    // check if given day is not in the future
+    let now = OffsetDateTime::now_utc();
+    let mut recorded = now;
+
+    if let Some(s) = body.recorded_at.as_deref() {
+        let parsed = match OffsetDateTime::parse(s, &Rfc3339) {
+            Ok(v) => v,
+            Err(_) => return HttpResponse::BadRequest().body("invalid recorded_at (use RFC3339)")
+        };
+
+        if parsed > now {
+            return HttpResponse::BadRequest().body("You can't choose a future date");
+        }
+    }
+
     // Insert into Database
     let res: Result<(Uuid, Uuid, f64, String, String, String), sqlx::Error> = sqlx::query_as(
         r#"
-        INSERT INTO consumptions (place_id, recorded_at, value, unit, energy)
-        VALUES ($1, COALESCE($2::timestamptz, now()), $3, $4, $5::energy_type)
+        INSERT INTO consumptions (place_id, recorded_at, day, value, unit, energy)
+        VALUES ($1, COALESCE($2::timestamptz, now()), (COALESCE($2::timestamptz, now()))::date, $3, $4, $5::energy_type)
+        ON CONFLICT (place_id, energy, day)
+        DO UPDATE SET
+            recorded_at = EXCLUDED.recorded_at,
+            value = EXCLUDED.value,
+            unit = EXCLUDED.unit
         RETURNING id, place_id, value, unit, energy::text,recorded_at::text
         "#,
     )
     .bind(body.place_id)
-    .bind(body.recorded_at.as_deref())
+    .bind(recorded)
     .bind(body.value)
     .bind(&unit)
     .bind(&energy)
