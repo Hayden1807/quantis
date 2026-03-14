@@ -1,4 +1,4 @@
-use actix_web::{get, post, put, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{delete, get, post, put, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use sqlx::{
     postgres::PgPoolOptions,
     PgPool,
@@ -17,12 +17,13 @@ use rand::rngs::OsRng;
 
 // Token generator
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
 
 // Cookies
 use actix_web::cookie::{Cookie, SameSite};
 use actix_web::cookie::time::Duration as CookieDuration;
 use time::Duration as TimeDuration; // as to avoid conflict
+use time::format_description::well_known::Rfc3339;
 
 // sign up struct
 #[derive(Deserialize)]
@@ -172,10 +173,44 @@ struct RecentRow {
     energy: String,
     value: f64,
     unit: String,
+    status: String,
 }
 #[derive(Serialize)]
 struct RecentResp {
     items: Vec<RecentRow>,
+}
+
+#[derive(Deserialize)]
+struct AlertsQuery {
+    place_id: Uuid,
+    period: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct AlertMetricsRow {
+    energy: String,
+    current_month_total_kwh: f64,
+    goal_kwh: f64,
+}
+
+#[derive(Serialize)]
+struct AlertItem {
+    id: String,
+    severity: String,
+    kind: String,
+    title: String,
+    message: String,
+    energy: Option<String>,
+    period: String,
+    value_kwh: Option<f64>,
+    goal_kwh: Option<f64>,
+    action_label: Option<String>,
+    action_href: Option<String>,
+}
+
+#[derive(Serialize)]
+struct AlertsResp {
+    items: Vec<AlertItem>,
 }
 
 // === History ===
@@ -213,6 +248,23 @@ fn normalize_email(email: &str) -> String {
 fn basic_email_valid(email: &str) -> bool {
     let e = email.trim();
     e.contains('@') && e.contains('.') && e.len() <= 254
+}
+
+fn green_tip_for_energy(energy: &str, seed: u8) -> &'static str {
+    let elec_tips = [
+        "gardez le même rythme sur les appareils les plus utilisés",
+        "pensez à couper les appareils en veille",
+        "gardez vos habitudes actuelles aux heures de forte utilisation",
+    ];
+    let gas_tips = [
+        "gardez vos réglages actuels pour le chauffage et l'eau chaude",
+        "évitez les chauffes inutiles pendant les périodes creuses",
+        "gardez vos réglages actuels si le confort vous convient",
+    ];
+
+    let tips = if energy == "gas" { &gas_tips } else { &elec_tips };
+    let idx = (seed as usize) % tips.len();
+    tips[idx]
 }
 
 fn make_jwt(state: &AppState, user_id: Uuid, email: &str) -> Result<String, jsonwebtoken::errors::Error> {
@@ -507,6 +559,96 @@ async fn list_places(req: HttpRequest, state: web::Data<AppState>) -> impl Respo
     }
 }
 
+#[put("/places/{place_id}")]
+async fn update_place(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    path: web::Path<PlacePath>,
+    body: web::Json<CreatePlaceReq>,
+) -> impl Responder {
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let user_id = match Uuid::parse_str(&claims.sub) {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::Unauthorized().body("invalid token"),
+    };
+
+    let name = body.name.trim().to_string();
+    if name.is_empty() || name.len() > 80 {
+        return HttpResponse::BadRequest().body("invalid name");
+    }
+
+    let res: Result<(Uuid, String), sqlx::Error> = sqlx::query_as(
+        r#"
+        UPDATE places
+        SET name = $3
+        WHERE id = $1 AND user_id = $2
+        RETURNING id, name
+        "#,
+    )
+    .bind(path.place_id)
+    .bind(user_id)
+    .bind(&name)
+    .fetch_one(&state.db)
+    .await;
+
+    match res {
+        Ok((id, name)) => HttpResponse::Ok().json(PlaceResp { id, name }),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("place not found"),
+        Err(sqlx::Error::Database(db_err)) => {
+            let is_unique = db_err.code().as_deref() == Some("23505");
+            if is_unique {
+                HttpResponse::Conflict().body("place name already exists")
+            } else {
+                eprintln!("UPDATE PLACE error: {db_err:?}");
+                HttpResponse::InternalServerError().body("db error")
+            }
+        }
+        Err(e) => {
+            eprintln!("UPDATE PLACE error: {e:?}");
+            HttpResponse::InternalServerError().body("db error")
+        }
+    }
+}
+
+#[delete("/places/{place_id}")]
+async fn delete_place(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    path: web::Path<PlacePath>,
+) -> impl Responder {
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let user_id = match Uuid::parse_str(&claims.sub) {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::Unauthorized().body("invalid token"),
+    };
+
+    let deleted = sqlx::query(
+        r#"
+        DELETE FROM places
+        WHERE id = $1 AND user_id = $2
+        "#,
+    )
+    .bind(path.place_id)
+    .bind(user_id)
+    .execute(&state.db)
+    .await;
+
+    match deleted {
+        Ok(result) if result.rows_affected() > 0 => HttpResponse::NoContent().finish(),
+        Ok(_) => HttpResponse::NotFound().body("place not found"),
+        Err(e) => {
+            eprintln!("DELETE PLACE error: {e:?}");
+            HttpResponse::InternalServerError().body("db error")
+        }
+    }
+}
+
 // destroy cookie
 #[post("/logout")]
 async fn logout(req:HttpRequest, state: web::Data<AppState>) -> impl Responder {
@@ -569,16 +711,35 @@ async fn add_data(req: HttpRequest, state: web::Data<AppState>, body: web::Json<
         return HttpResponse::BadRequest().body("invalid energy type");
     }
 
+    let now = OffsetDateTime::now_utc();
+    let recorded_at = if let Some(s) = body.recorded_at.as_deref() {
+        let parsed = match OffsetDateTime::parse(s, &Rfc3339) {
+            Ok(v) => v,
+            Err(_) => return HttpResponse::BadRequest().body("invalid recorded_at (use RFC3339)"),
+        };
+        if parsed > now {
+            return HttpResponse::BadRequest().body("future date not allowed");
+        }
+        parsed
+    } else {
+        now
+    };
+
     // Insert into Database
     let res: Result<(Uuid, Uuid, f64, String, String, String), sqlx::Error> = sqlx::query_as(
         r#"
-        INSERT INTO consumptions (place_id, recorded_at, value, unit, energy)
-        VALUES ($1, COALESCE($2::timestamptz, now()), $3, $4, $5::energy_type)
+        INSERT INTO consumptions (place_id, recorded_at, day, value, unit, energy)
+        VALUES ($1, $2, ($2)::date, $3, $4, $5::energy_type)
+        ON CONFLICT (place_id, energy, day)
+        DO UPDATE SET
+            recorded_at = EXCLUDED.recorded_at,
+            value = EXCLUDED.value,
+            unit = EXCLUDED.unit
         RETURNING id, place_id, value, unit, energy::text,recorded_at::text
         "#,
     )
     .bind(body.place_id)
-    .bind(body.recorded_at.as_deref())
+    .bind(recorded_at)
     .bind(body.value)
     .bind(&unit)
     .bind(&energy)
@@ -790,6 +951,191 @@ async fn dashboard_summary(req: HttpRequest, state: web::Data<AppState>, q: web:
         Err(e) => { eprintln!("SUMMARY ERROR: {e:?}"); HttpResponse::InternalServerError().body("db error") }
     }
 }
+
+#[get("/dashboard/alerts")]
+async fn dashboard_alerts(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    q: web::Query<AlertsQuery>,
+) -> impl Responder {
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let user_id = match Uuid::parse_str(&claims.sub) {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::Unauthorized().body("invalid token"),
+    };
+
+    let owns = sqlx::query_scalar::<_, i32>("SELECT 1 FROM places WHERE id=$1 AND user_id=$2")
+        .bind(q.place_id)
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await;
+
+    match owns {
+        Ok(Some(_)) => {}
+        Ok(None) => return HttpResponse::NotFound().body("place not found"),
+        Err(e) => {
+            eprintln!("ALERTS owns error: {e:?}");
+            return HttpResponse::InternalServerError().body("db error");
+        }
+    }
+
+    let period = q.period.trim().to_lowercase();
+    if !matches!(period.as_str(), "week" | "month") {
+        return HttpResponse::BadRequest().body("period must be week|month");
+    }
+
+    let (current_from_sql, current_to_sql, goal_col, period_label) =
+        if period == "week" {
+            (
+                "now() - interval '7 days'",
+                "now()",
+                "weekly_target_kwh",
+                "hebdomadaire",
+            )
+        } else {
+            (
+                "date_trunc('month', now())",
+                "date_trunc('month', now()) + interval '1 month'",
+                "monthly_target_kwh",
+                "mensuel",
+            )
+        };
+
+    let rows: Result<Vec<AlertMetricsRow>, sqlx::Error> = sqlx::query_as(
+        &format!(
+        r#"
+        WITH current_month AS (
+          SELECT
+            c.energy::text AS energy,
+            COALESCE(SUM(c.value), 0)::float8 AS total_kwh
+          FROM consumptions c
+          WHERE c.place_id = $1
+            AND c.recorded_at >= ({current_from_sql})
+            AND c.recorded_at < ({current_to_sql})
+          GROUP BY c.energy
+        ),
+        goals AS (
+          SELECT
+            g.energy::text AS energy,
+            COALESCE(g.{goal_col}, 0)::float8 AS goal_kwh
+          FROM place_goals g
+          WHERE g.place_id = $1
+        )
+        SELECT
+          e.energy::text AS energy,
+          COALESCE(cm.total_kwh, 0)::float8 AS current_month_total_kwh,
+          COALESCE(go.goal_kwh, 0)::float8 AS goal_kwh
+        FROM (VALUES ('electricity'::energy_type), ('gas'::energy_type)) e(energy)
+        LEFT JOIN current_month cm ON cm.energy = e.energy::text
+        LEFT JOIN goals go ON go.energy = e.energy::text
+        ORDER BY e.energy::text
+        "#
+        )
+    )
+    .bind(q.place_id)
+    .fetch_all(&state.db)
+    .await;
+
+    let rows = match rows {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("ALERTS ERROR: {e:?}");
+            return HttpResponse::InternalServerError().body("db error");
+        }
+    };
+
+    let now = OffsetDateTime::now_utc();
+    let tip_seed = now.day();
+
+    let mut items: Vec<(i32, AlertItem)> = Vec::new();
+
+    for row in rows {
+        if row.current_month_total_kwh <= 0.0 {
+            continue;
+        }
+
+        let energy_objective = if row.energy == "gas" {
+            "pour le gaz"
+        } else {
+            "pour l'électricité"
+        };
+
+        if row.goal_kwh > 0.0 {
+            let pct = (row.current_month_total_kwh / row.goal_kwh) * 100.0;
+            if row.current_month_total_kwh > row.goal_kwh {
+                items.push((
+                    300,
+                    AlertItem {
+                        id: format!("{}-month-alert", row.energy),
+                        severity: "alert".to_string(),
+                        kind: "alert".to_string(),
+                        title: format!("Objectif {} dépassé", period_label),
+                        message: format!("Vous avez dépassé votre objectif {} {}.", period_label, energy_objective),
+                        energy: Some(row.energy.clone()),
+                        period: period.clone(),
+                        value_kwh: Some(row.current_month_total_kwh),
+                        goal_kwh: Some(row.goal_kwh),
+                        action_label: Some("Voir l'historique".to_string()),
+                        action_href: Some("/hist.html".to_string()),
+                    },
+                ));
+            } else if pct >= 80.0 {
+                items.push((
+                    220,
+                    AlertItem {
+                        id: format!("{}-month-watch", row.energy),
+                        severity: "watch".to_string(),
+                        kind: "alert".to_string(),
+                        title: "Objectif presque atteint".to_string(),
+                        message: format!(
+                            "Vous avez atteint {:.0} % de votre objectif {} {}.",
+                            pct, period_label, energy_objective
+                        ),
+                        energy: Some(row.energy.clone()),
+                        period: period.clone(),
+                        value_kwh: Some(row.current_month_total_kwh),
+                        goal_kwh: Some(row.goal_kwh),
+                        action_label: Some("Voir l'historique".to_string()),
+                        action_href: Some("/hist.html".to_string()),
+                    },
+                ));
+            } else {
+                let tip = green_tip_for_energy(
+                    &row.energy,
+                    tip_seed + if row.energy == "gas" { 1 } else { 0 },
+                );
+                items.push((
+                    90,
+                    AlertItem {
+                        id: format!("{}-month-ok", row.energy),
+                        severity: "info".to_string(),
+                        kind: "advice".to_string(),
+                        title: "Objectif bien maîtrisé".to_string(),
+                        message: format!(
+                            "Vous avez atteint {:.0} % de votre objectif {} {}. Conseil : {}.",
+                            pct, period_label, energy_objective, tip
+                        ),
+                        energy: Some(row.energy.clone()),
+                        period: period.clone(),
+                        value_kwh: Some(row.current_month_total_kwh),
+                        goal_kwh: Some(row.goal_kwh),
+                        action_label: Some("Voir l'historique".to_string()),
+                        action_href: Some("/hist.html".to_string()),
+                    },
+                ));
+            }
+        }
+    }
+
+    items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
+    items.truncate(2);
+
+    let items = items.into_iter().map(|(_, item)| item).collect();
+    HttpResponse::Ok().json(AlertsResp { items })
+}
 #[get("/dashboard/series")]
 async fn dashboard_series(req: HttpRequest, state: web::Data<AppState>, q: web::Query<SeriesQuery>,) -> impl Responder {
     let claims = match require_auth(&req, state.get_ref()) {
@@ -906,14 +1252,57 @@ async fn dashboard_recent(
 
     let rows: Result<Vec<RecentRow>, sqlx::Error> = sqlx::query_as(
         r#"
+        WITH recent AS (
+          SELECT
+            c.id,
+            c.recorded_at,
+            c.energy,
+            c.value,
+            c.unit,
+            to_char(date_trunc('day', c.recorded_at), 'YYYY-MM-DD') AS day,
+            to_char(date_trunc('month', c.recorded_at), 'YYYY-MM') AS month_key
+          FROM consumptions c
+          WHERE c.place_id = $1
+          ORDER BY c.recorded_at DESC
+          LIMIT $2
+        ),
+        monthly AS (
+          SELECT
+            to_char(date_trunc('month', c.recorded_at), 'YYYY-MM') AS month_key,
+            c.energy::text AS energy,
+            SUM(c.value)::float8 AS total_kwh
+          FROM consumptions c
+          INNER JOIN recent r
+            ON r.month_key = to_char(date_trunc('month', c.recorded_at), 'YYYY-MM')
+           AND r.energy = c.energy
+          WHERE c.place_id = $1
+          GROUP BY 1, 2
+        ),
+        goals AS (
+          SELECT
+            g.energy::text AS energy,
+            COALESCE(g.monthly_target_kwh, 0.0)::float8 AS goal_kwh
+          FROM place_goals g
+          WHERE g.place_id = $1
+        )
         SELECT
-          recorded_at::text AS recorded_at,
-          energy::text      AS energy,
-          value             AS value,
-          unit              AS unit
-        FROM consumptions
-        WHERE place_id = $1
-        ORDER BY recorded_at DESC
+          r.recorded_at::text AS recorded_at,
+          r.energy::text      AS energy,
+          r.value             AS value,
+          r.unit              AS unit,
+          CASE
+            WHEN COALESCE(go.goal_kwh, 0.0) <= 0.0 THEN 'ok'
+            WHEN m.total_kwh < (go.goal_kwh * 0.8) THEN 'ok'
+            WHEN m.total_kwh <= go.goal_kwh THEN 'watch'
+            ELSE 'alert'
+          END AS status
+        FROM recent r
+        LEFT JOIN monthly m
+          ON m.month_key = r.month_key
+         AND m.energy = r.energy::text
+        LEFT JOIN goals go
+          ON go.energy = r.energy::text
+        ORDER BY r.recorded_at DESC
         LIMIT $2
         "#
     )
@@ -1005,6 +1394,7 @@ async fn history(
       daily AS (
         SELECT
           to_char(date_trunc('day', c.recorded_at), 'YYYY-MM-DD') AS day,
+          to_char(date_trunc('month', c.recorded_at), 'YYYY-MM') AS month_key,
           c.energy::text AS energy,
           SUM(c.value)::float8 AS total_kwh
         FROM consumptions c, bounds b
@@ -1012,18 +1402,26 @@ async fn history(
           AND c.recorded_at >= b.d_from
           AND c.recorded_at < (b.d_to + 1)
           AND ($4::text IS NULL OR c.energy = $4::energy_type)
-        GROUP BY 1, 2
+        GROUP BY 1, 2, 3
       ),
       goals AS (
         SELECT
           g.energy::text AS energy,
-          CASE
-            WHEN g.weekly_target_kwh > 0 THEN (g.weekly_target_kwh / 7.0)
-            WHEN g.monthly_target_kwh > 0 THEN (g.monthly_target_kwh / 30.0)
-            ELSE 0.0
-          END AS goal_kwh
+          COALESCE(g.monthly_target_kwh, 0.0)::float8 AS goal_kwh
         FROM place_goals g
         WHERE g.place_id = $1
+      ),
+      monthly AS (
+        SELECT
+          to_char(date_trunc('month', c.recorded_at), 'YYYY-MM') AS month_key,
+          c.energy::text AS energy,
+          SUM(c.value)::float8 AS total_kwh
+        FROM consumptions c, bounds b
+        WHERE c.place_id = $1
+          AND c.recorded_at >= date_trunc('month', b.d_from)
+          AND c.recorded_at < (date_trunc('month', b.d_to) + interval '1 month')
+          AND ($4::text IS NULL OR c.energy = $4::energy_type)
+        GROUP BY 1, 2
       ),
       enriched AS (
         SELECT
@@ -1031,11 +1429,12 @@ async fn history(
           COALESCE(go.goal_kwh, 0.0)::float8 AS goal_kwh,
           CASE
             WHEN COALESCE(go.goal_kwh, 0.0) <= 0.0 THEN 'ok'
-            WHEN d.total_kwh <= go.goal_kwh THEN 'ok'
-            WHEN d.total_kwh <= (go.goal_kwh * 1.1) THEN 'watch'
+            WHEN m.total_kwh < (go.goal_kwh * 0.8) THEN 'ok'
+            WHEN m.total_kwh <= go.goal_kwh THEN 'watch'
             ELSE 'alert'
           END AS status
         FROM daily d
+        LEFT JOIN monthly m ON m.month_key = d.month_key AND m.energy = d.energy
         LEFT JOIN goals go ON go.energy = d.energy
       )
       SELECT COUNT(*)::bigint
@@ -1069,6 +1468,7 @@ async fn history(
       daily AS (
         SELECT
           to_char(date_trunc('day', c.recorded_at), 'YYYY-MM-DD') AS day,
+          to_char(date_trunc('month', c.recorded_at), 'YYYY-MM') AS month_key,
           c.energy::text AS energy,
           SUM(c.value)::float8 AS total_kwh
         FROM consumptions c, bounds b
@@ -1076,18 +1476,26 @@ async fn history(
           AND c.recorded_at >= b.d_from
           AND c.recorded_at < (b.d_to + 1)
           AND ($4::text IS NULL OR c.energy = $4::energy_type)
-        GROUP BY 1, 2
+        GROUP BY 1, 2, 3
       ),
       goals AS (
         SELECT
           g.energy::text AS energy,
-          CASE
-            WHEN g.weekly_target_kwh > 0 THEN (g.weekly_target_kwh / 7.0)
-            WHEN g.monthly_target_kwh > 0 THEN (g.monthly_target_kwh / 30.0)
-            ELSE 0.0
-          END AS goal_kwh
+          COALESCE(g.monthly_target_kwh, 0.0)::float8 AS goal_kwh
         FROM place_goals g
         WHERE g.place_id = $1
+      ),
+      monthly AS (
+        SELECT
+          to_char(date_trunc('month', c.recorded_at), 'YYYY-MM') AS month_key,
+          c.energy::text AS energy,
+          SUM(c.value)::float8 AS total_kwh
+        FROM consumptions c, bounds b
+        WHERE c.place_id = $1
+          AND c.recorded_at >= date_trunc('month', b.d_from)
+          AND c.recorded_at < (date_trunc('month', b.d_to) + interval '1 month')
+          AND ($4::text IS NULL OR c.energy = $4::energy_type)
+        GROUP BY 1, 2
       ),
       enriched AS (
         SELECT
@@ -1095,11 +1503,12 @@ async fn history(
           COALESCE(go.goal_kwh, 0.0)::float8 AS goal_kwh,
           CASE
             WHEN COALESCE(go.goal_kwh, 0.0) <= 0.0 THEN 'ok'
-            WHEN d.total_kwh <= go.goal_kwh THEN 'ok'
-            WHEN d.total_kwh <= (go.goal_kwh * 1.1) THEN 'watch'
+            WHEN m.total_kwh < (go.goal_kwh * 0.8) THEN 'ok'
+            WHEN m.total_kwh <= go.goal_kwh THEN 'watch'
             ELSE 'alert'
           END AS status
         FROM daily d
+        LEFT JOIN monthly m ON m.month_key = d.month_key AND m.energy = d.energy
         LEFT JOIN goals go ON go.energy = d.energy
       )
       SELECT day, energy, total_kwh, goal_kwh, status
@@ -1175,11 +1584,14 @@ async fn main() -> std::io::Result<()> {
             .service(me)
             .service(logout)
             .service(create_place)
+            .service(update_place)
+            .service(delete_place)
             .service(add_data)
             .service(set_goal)
             .service(get_goals)
             .service(list_places)
             .service(dashboard_summary)
+            .service(dashboard_alerts)
             .service(dashboard_series)
             .service(dashboard_recent)
             .service(history)
@@ -1188,4 +1600,3 @@ async fn main() -> std::io::Result<()> {
     .run()
     .await
 }
-

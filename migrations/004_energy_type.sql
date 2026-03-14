@@ -9,4 +9,3 @@ ALTER TABLE consumptions
   ADD COLUMN IF NOT EXISTS energy energy_type NOT NULL DEFAULT 'electricity';
 
 CREATE INDEX IF NOT EXISTS consumptions_energy_idx ON consumptions(energy);
-

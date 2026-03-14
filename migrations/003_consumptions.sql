@@ -11,4 +11,3 @@ CREATE TABLE IF NOT EXISTS consumptions (
 );
 
 CREATE INDEX IF NOT EXISTS consumptions_place_time_idx ON consumptions(place_id, recorded_at DESC);
-

@@ -85,6 +85,28 @@
             </div>
           </fieldset>
 
+          <fieldset class="addConsoForm__group">
+            <legend>Objectif du profil</legend>
+
+            <div class="addConsoForm__grid">
+              <div class="field">
+                <label for="goal_target">Objectif (kWh)</label>
+                <input
+                  id="goal_target"
+                  name="goal_target"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  placeholder="ex: 480"
+                />
+              </div>
+            </div>
+
+            <div class="hint muted">
+              Un seul objectif est enregistré pour ce profil.
+            </div>
+          </fieldset>
+
           <button
             class="btn btn--primary form__btn addConsoForm__submit"
             type="submit"
@@ -134,11 +156,14 @@
         const date = $("#conso_date").value; // YYYY-MM-DD
         const typeRaw = $("#conso_type").value;
         const value = Number($("#conso_value").value);
+        const goalTarget = Number($("#goal_target").value || 0);
 
         if (!profileName) return (out.textContent = "Nom du profil requis");
         if (!date) return (out.textContent = "Date requise");
         if (!Number.isFinite(value) || value < 0)
           return (out.textContent = "Valeur invalide");
+        if (!Number.isFinite(goalTarget) || goalTarget < 0)
+          return (out.textContent = "Objectif invalide");
 
         const energy = mapEnergy(typeRaw);
         const recorded_at = `${date}T00:00:00Z`;
@@ -164,9 +189,24 @@
             }),
           });
 
+          const goals = await Promise.all(
+            ["electricity", "gas"].map((kind) =>
+              apiJson(`/api/places/${place.id}/goals`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  energy: kind,
+                  weekly_kwh: goalTarget > 0 ? goalTarget / 4 : 0,
+                  monthly_kwh: goalTarget,
+                }),
+              }),
+            ),
+          );
+
           out.textContent =
             `✅ OK\nPlace créée: ${place.name} (${place.id})\n` +
-            `Conso: ${conso.value} ${conso.unit} - ${conso.energy} - ${conso.recorded_at}\n\n` +
+            `Conso: ${conso.value} ${conso.unit} - ${conso.energy} - ${conso.recorded_at}\n` +
+            `Objectif profil: ${goals[0].monthly_target_kwh} kWh\n\n` +
             `Redirection vers dashboard...`;
 
           setTimeout(() => {

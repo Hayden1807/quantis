@@ -80,10 +80,18 @@
             <!-- dynamique -->
             <select id="placeSelect" aria-label="Lieu"></select>
           </div>
-
-          <a class="btn btn--primary" href="add-data.html"
-            >+ Ajouter un profil</a
-          >
+          <div class="dash__actionButtons">
+            <button
+              id="editPlaceBtn"
+              class="btn btn--ghost"
+              type="button"
+            >
+              Modifier le profil
+            </button>
+            <a class="btn btn--primary" href="add-data.html"
+              >+ Ajouter un profil</a
+            >
+          </div>
         </div>
       </section>
 
@@ -134,7 +142,7 @@
         <article class="panel kpiCard kpiCard--goal">
           <div class="panel__head">
             <div>
-              <div class="panel__label">Objectif</div>
+              <div class="panel__label" id="kpiGoalLabel">Marge (Semaine)</div>
               <div class="panel__value">
                 <span id="kpiGoalDelta">—</span> <span class="unit">kWh</span>
               </div>
@@ -314,6 +322,105 @@
       </section>
     </main>
 
+    <div
+      class="dashModal"
+      id="editPlaceModal"
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="editPlaceTitle"
+    >
+      <div class="dashModal__backdrop" data-edit-modal-close></div>
+      <div class="dashModal__card">
+        <header class="dashModal__head">
+          <h2 class="dashModal__title" id="editPlaceTitle">
+            Modifier le profil
+          </h2>
+          <button
+            class="dashModal__close"
+            type="button"
+            data-edit-modal-close
+            aria-label="Fermer"
+          >
+            x
+          </button>
+        </header>
+        <div class="dashModal__body">
+          <div class="field">
+            <label for="editPlaceName">Nom du profil</label>
+            <input id="editPlaceName" type="text" placeholder="ex: Maison principale" />
+          </div>
+          <div class="field">
+            <label for="editPlaceGoal">Objectif du profil (kWh)</label>
+            <input id="editPlaceGoal" type="number" min="0" step="0.1" placeholder="ex: 480" />
+          </div>
+          <p class="muted">
+            Cet objectif unique sera appliqué au profil entier.
+          </p>
+        </div>
+        <div class="dashModal__actions">
+          <button class="btn btn--ghost" type="button" data-edit-modal-close>
+            Annuler
+          </button>
+          <button id="openDeletePlaceBtn" class="btn btn--danger" type="button">
+            Supprimer le profil
+          </button>
+          <button
+            id="savePlaceBtn"
+            class="btn btn--primary"
+            type="button"
+          >
+            Enregistrer
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="dashModal"
+      id="deletePlaceModal"
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="deletePlaceTitle"
+    >
+      <div class="dashModal__backdrop" data-delete-modal-close></div>
+      <div class="dashModal__card">
+        <header class="dashModal__head">
+          <h2 class="dashModal__title" id="deletePlaceTitle">
+            Supprimer ce profil ?
+          </h2>
+          <button
+            class="dashModal__close"
+            type="button"
+            data-delete-modal-close
+            aria-label="Fermer"
+          >
+            x
+          </button>
+        </header>
+        <div class="dashModal__body">
+          <p>
+            Le profil <strong id="deletePlaceName">—</strong> et toutes ses
+            consommations seront supprimés.
+          </p>
+          <p class="muted">Cette action est irréversible.</p>
+        </div>
+        <div class="dashModal__actions">
+          <button class="btn btn--ghost" type="button" data-delete-modal-close>
+            Annuler
+          </button>
+          <button
+            id="confirmDeletePlaceBtn"
+            class="btn btn--danger"
+            type="button"
+          >
+            Supprimer définitivement
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Chart.js (CDN) -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
@@ -385,9 +492,160 @@
         return text ? JSON.parse(text) : null;
       }
 
-      function dotColorForDelta(delta) {
-        if (delta <= 0) return "statusDot--green";
-        if (delta <= 10) return "statusDot--orange";
+      async function apiDelete(url) {
+        const res = await fetch(url, {
+          method: "DELETE",
+          credentials: "include",
+        });
+        if (res.status === 401) {
+          showAuthMsg(
+            "Non authentifié (401). Connecte-toi puis reviens sur le dashboard.",
+          );
+          redirectToLogin();
+          throw new Error("unauthorized");
+        }
+        if (res.status === 204) return null;
+        const text = await res.text();
+        if (!res.ok) throw new Error(text);
+        return text ? JSON.parse(text) : null;
+      }
+
+      async function apiPut(url, body) {
+        const res = await fetch(url, {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (res.status === 401) {
+          showAuthMsg(
+            "Non authentifié (401). Connecte-toi puis reviens sur le dashboard.",
+          );
+          redirectToLogin();
+          throw new Error("unauthorized");
+        }
+        const text = await res.text();
+        if (!res.ok) throw new Error(text);
+        return text ? JSON.parse(text) : null;
+      }
+
+      function currentPlaceName() {
+        const sel = $("#placeSelect");
+        return sel?.options?.[sel.selectedIndex]?.textContent || "ce profil";
+      }
+
+      async function currentProfileGoal() {
+        if (!currentPlaceId) return 0;
+        const goals = await apiGet(`/api/places/${encodeURIComponent(currentPlaceId)}/goals`);
+        if (!Array.isArray(goals) || !goals.length) return 0;
+        return Math.max(
+          ...goals.map((goal) => Number(goal.monthly_target_kwh) || 0),
+          0,
+        );
+      }
+
+      function openModal(id) {
+        const modal = document.getElementById(id);
+        if (!modal) return;
+        modal.classList.add("is-open");
+        modal.setAttribute("aria-hidden", "false");
+      }
+
+      function closeModal(id) {
+        const modal = document.getElementById(id);
+        if (!modal) return;
+        modal.classList.remove("is-open");
+        modal.setAttribute("aria-hidden", "true");
+      }
+
+      async function openEditModal() {
+        if (!currentPlaceId) return;
+        $("#editPlaceName").value = currentPlaceName();
+        $("#editPlaceGoal").value = String(await currentProfileGoal());
+        openModal("editPlaceModal");
+      }
+
+      function openDeleteModal() {
+        $("#deletePlaceName").textContent = currentPlaceName();
+        openModal("deletePlaceModal");
+      }
+
+      function statusDot(status) {
+        if (status === "alert") {
+          return `<span class="dot dot--red" title="Alerte"></span>`;
+        }
+        if (status === "watch") {
+          return `<span class="dot dot--orange" title="À surveiller"></span>`;
+        }
+        return `<span class="dot dot--green" title="OK"></span>`;
+      }
+
+      function alertBadgeLabel(severity) {
+        if (severity === "alert") return "Alerte";
+        if (severity === "watch") return "À surveiller";
+        return "Info";
+      }
+
+      function energyName(energyKey) {
+        if (energyKey === "gas") return "Gaz";
+        if (energyKey === "electricity") return "Électricité";
+        return "";
+      }
+
+      function formatAlertMessage(message) {
+        return String(message || "")
+          .replace(/(\d+(?:[.,]\d+)?)\s?%/g, "<strong>$1 %</strong>")
+          .replace(/(\d+(?:[.,]\d+)?)\s?kWh/g, "<strong>$1 kWh</strong>")
+          .replace(/(Conseil\s*:)/g, "<strong>$1</strong>");
+      }
+
+      function alertPeriodLabel(periodKey) {
+        if (periodKey === "week") return "Hebdomadaire";
+        if (periodKey === "month") return "Mensuel";
+        return "";
+      }
+
+      function renderAlerts(items) {
+        const root = $("#alertsList");
+        if (!root) return;
+        root.innerHTML = "";
+
+        if (!Array.isArray(items) || !items.length) {
+          root.innerHTML = `
+            <div class="advice advice--empty">
+              <div class="advice__head">
+                <span class="pill">Info</span>
+                <span class="muted">Aucune alerte pour le moment.</span>
+              </div>
+            </div>
+          `;
+          return;
+        }
+
+        for (const item of items) {
+          const card = document.createElement("article");
+          card.className = `advice advice--${item.severity || "info"}`;
+          card.innerHTML = `
+            <div class="advice__head">
+              <div class="advice__meta">
+                <span class="pill">${alertBadgeLabel(item.severity)}</span>
+                <span class="pill advice__period">${alertPeriodLabel(item.period)}</span>
+              </div>
+              <span class="advice__energy muted">${energyName(item.energy)}</span>
+            </div>
+            <div class="advice__title">${item.title || "Conseil"}</div>
+            <p class="advice__text muted">${formatAlertMessage(item.message)}</p>
+            ${item.action_href ? `<a class="advice__link" href="${item.action_href}">${item.action_label || "Voir"}</a>` : ""}
+          `;
+          root.appendChild(card);
+        }
+      }
+
+      function dotColorForGoal(total, goal) {
+        if (!Number.isFinite(goal) || goal <= 0) return "statusDot--green";
+        const pct = (Number(total) / Number(goal)) * 100;
+        if (pct < 80) return "statusDot--green";
+        if (pct <= 100) return "statusDot--orange";
         return "statusDot--red";
       }
 
@@ -399,6 +657,13 @@
           "statusDot--red",
         );
         el.classList.add(cls);
+        if (cls === "statusDot--red") {
+          el.title = "Dépassé";
+        } else if (cls === "statusDot--orange") {
+          el.title = "À surveiller";
+        } else {
+          el.title = "OK";
+        }
       }
 
       function setDeltaText(el, delta) {
@@ -415,7 +680,7 @@
         else el.classList.add("delta--down");
       }
 
-      async function loadPlaces() {
+      async function loadPlaces(preferredPlaceId = currentPlaceId) {
         const places = await apiGet("/api/places");
         const sel = $("#placeSelect");
         sel.innerHTML = "";
@@ -427,14 +692,20 @@
           sel.appendChild(opt);
         }
 
-        if (places.length) {
-          currentPlaceId = places[0].id;
+        const preferred =
+          places.find((p) => p.id === preferredPlaceId) || places[0] || null;
+
+        if (preferred) {
+          currentPlaceId = preferred.id;
           sel.value = currentPlaceId;
-          $("#scopeName").textContent = places[0].name;
+          $("#scopeName").textContent = preferred.name;
         } else {
           currentPlaceId = null;
           $("#scopeName").textContent = "—";
         }
+
+        const editBtn = $("#editPlaceBtn");
+        if (editBtn) editBtn.disabled = !places.length;
 
         sel.onchange = async () => {
           currentPlaceId = sel.value;
@@ -470,8 +741,14 @@
         setDeltaText($("#kpiGasDelta"), gas ? gas.delta_kwh : 0);
 
         // dots
-        setDot($("#kpiElecDot"), dotColorForDelta(elec ? elec.delta_kwh : 0));
-        setDot($("#kpiGasDot"), dotColorForDelta(gas ? gas.delta_kwh : 0));
+        setDot(
+          $("#kpiElecDot"),
+          dotColorForGoal(elec ? elec.total_kwh : 0, elec ? elec.goal_kwh : 0),
+        );
+        setDot(
+          $("#kpiGasDot"),
+          dotColorForGoal(gas ? gas.total_kwh : 0, gas ? gas.goal_kwh : 0),
+        );
 
         // last recorded date (for selected energy)
         const last =
@@ -483,12 +760,14 @@
         const total = sel ? sel.total_kwh : 0;
         const goal = sel ? sel.goal_kwh : 0;
         const delta = sel ? sel.delta_kwh : 0;
+        $("#kpiGoalLabel").textContent =
+          `Marge (${period === "week" ? "Semaine" : "Mois"})`;
 
         // goal target
         $("#kpiGoalTarget").textContent = (goal || 0).toFixed(1);
         // goal delta
         $("#kpiGoalDelta").textContent = Math.abs(delta).toFixed(1);
-        setDot($("#kpiGoalDot"), dotColorForDelta(delta));
+        setDot($("#kpiGoalDot"), dotColorForGoal(total, goal));
 
         // progress bar
         const pct =
@@ -502,7 +781,7 @@
         setDeltaText($("#statDeltaVsGoal"), delta);
 
         // chart dot matches selected energy delta
-        setDot($("#chartDot"), dotColorForDelta(delta));
+        setDot($("#chartDot"), dotColorForGoal(total, goal));
 
         return data;
       }
@@ -567,26 +846,26 @@
         if (!currentPlaceId) return;
 
         const data = await apiGet(
-          `/api/dashboard/recent?place_id=${encodeURIComponent(currentPlaceId)}&limit=5`,
+          `/api/history?place_id=${encodeURIComponent(currentPlaceId)}&energy=all&status=all&page=1&limit=5&sort=desc`,
         );
 
         const tbody = $("#recentTbody");
         tbody.innerHTML = "";
 
-        for (const r of data.items) {
+        for (const row of data.items) {
           const tr = document.createElement("tr");
 
           const tdDate = document.createElement("td");
-          tdDate.textContent = fmtDateFR(r.recorded_at);
+          tdDate.textContent = fmtDateFR(row.day);
 
           const tdType = document.createElement("td");
-          tdType.textContent = energyLabel(r.energy);
+          tdType.textContent = energyLabel(row.energy);
 
           const tdVal = document.createElement("td");
-          tdVal.textContent = `${Number(r.value).toFixed(1)} ${r.unit}`;
+          tdVal.textContent = `${Number(row.total_kwh).toFixed(1)} kWh`;
 
           const tdStatus = document.createElement("td");
-          tdStatus.innerHTML = `<span class="dot dot--green" title="OK"></span>`;
+          tdStatus.innerHTML = statusDot(row.status);
 
           tr.appendChild(tdDate);
           tr.appendChild(tdType);
@@ -597,10 +876,19 @@
         }
       }
 
+      async function loadAlerts() {
+        if (!currentPlaceId) return;
+        const data = await apiGet(
+          `/api/dashboard/alerts?place_id=${encodeURIComponent(currentPlaceId)}&period=${period}`,
+        );
+        renderAlerts(data.items);
+      }
+
       async function refreshAll() {
         await loadSummary();
         await loadSeries();
         await loadRecent();
+        await loadAlerts();
       }
 
       function bindToggles() {
@@ -670,6 +958,89 @@
         });
       }
 
+      function bindEditPlace() {
+        const openBtn = $("#editPlaceBtn");
+        const saveBtn = $("#savePlaceBtn");
+        const deleteBtn = $("#openDeletePlaceBtn");
+        const confirmBtn = $("#confirmDeletePlaceBtn");
+        if (!openBtn || !confirmBtn || !saveBtn || !deleteBtn) return;
+
+        openBtn.addEventListener("click", async () => {
+          await openEditModal();
+        });
+
+        document.querySelectorAll("[data-edit-modal-close]").forEach((el) => {
+          el.addEventListener("click", () => closeModal("editPlaceModal"));
+        });
+        document.querySelectorAll("[data-delete-modal-close]").forEach((el) => {
+          el.addEventListener("click", () => closeModal("deletePlaceModal"));
+        });
+
+        deleteBtn.addEventListener("click", () => {
+          closeModal("editPlaceModal");
+          openDeleteModal();
+        });
+
+        saveBtn.addEventListener("click", async () => {
+          if (!currentPlaceId) return;
+
+          const name = $("#editPlaceName").value.trim();
+          const goalTarget = Number($("#editPlaceGoal").value || 0);
+
+          if (!name) return alert("Nom du profil requis");
+          if (!Number.isFinite(goalTarget) || goalTarget < 0) {
+            return alert("Objectif invalide");
+          }
+
+          saveBtn.disabled = true;
+          try {
+            await apiPut(`/api/places/${encodeURIComponent(currentPlaceId)}`, {
+              name,
+            });
+
+            await Promise.all(["electricity", "gas"].map((kind) =>
+              apiPut(`/api/places/${encodeURIComponent(currentPlaceId)}/goals`, {
+                energy: kind,
+                weekly_kwh: goalTarget > 0 ? goalTarget / 4 : 0,
+                monthly_kwh: goalTarget,
+              }),
+            ));
+
+            await loadPlaces(currentPlaceId);
+            await refreshAll();
+            closeModal("editPlaceModal");
+          } catch (err) {
+            if (err.message !== "unauthorized") {
+              alert("Modification impossible: " + err.message);
+            }
+          } finally {
+            saveBtn.disabled = false;
+          }
+        });
+
+        confirmBtn.addEventListener("click", async () => {
+          if (!currentPlaceId) return;
+
+          confirmBtn.disabled = true;
+          try {
+            await apiDelete(`/api/places/${encodeURIComponent(currentPlaceId)}`);
+            closeModal("deletePlaceModal");
+            await loadPlaces();
+            if (!currentPlaceId) {
+              window.location.href = "/add-data.html";
+              return;
+            }
+            await refreshAll();
+          } catch (err) {
+            if (err.message !== "unauthorized") {
+              alert("Suppression impossible: " + err.message);
+            }
+          } finally {
+            confirmBtn.disabled = false;
+          }
+        });
+      }
+
       function bindLogout() {
         const btn = $("#logoutBtn");
         if (!btn) return;
@@ -700,9 +1071,14 @@
 
           bindToggles();
           bindAddForm();
+          bindEditPlace();
           bindLogout();
 
           await loadPlaces();
+          if (!currentPlaceId) {
+            window.location.href = "/add-data.html";
+            return;
+          }
           await refreshAll();
         } catch (e) {
           if (e.message !== "unauthorized") {

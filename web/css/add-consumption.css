@@ -1,12 +1,5 @@
-:root{
-  --add-shadow: 0 24px 65px rgba(0, 0, 0, 0.42);
-}
-
 body{
-  background:
-    radial-gradient(800px 400px at 10% -10%, rgba(79,209,255,0.16), transparent 60%),
-    radial-gradient(700px 420px at 100% 10%, rgba(139,107,255,0.14), transparent 62%),
-    var(--bg);
+  background: var(--bg);
 }
 
 .addConsoPage{
@@ -45,23 +38,7 @@ body{
   background:
     linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.035));
   border-color: rgba(255,255,255,0.14);
-  box-shadow: var(--add-shadow);
   overflow: visible;
-}
-
-.addConsoCard::before{
-  content: "";
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, rgba(79,209,255,0.24), rgba(139,107,255,0.14), rgba(255,255,255,0.06));
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
 }
 
 .addConsoCard__head{
@@ -107,6 +84,10 @@ body{
   gap: 12px;
 }
 
+.addConsoForm__grid > .field:only-child{
+  grid-column: 1 / -1;
+}
+
 .addConsoForm__value{
   grid-column: 1 / -1;
 }
@@ -115,6 +96,10 @@ body{
   margin-top: 2px;
   min-height: 48px;
   font-size: 15px;
+}
+
+.addConsoForm .hint{
+  margin-top: 8px;
 }
 
 @media (max-width: 640px){
