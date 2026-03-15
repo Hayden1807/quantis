@@ -17,7 +17,6 @@
         aria-label="Retour au dashboard"
         >x</a
       >
-
       <section class="panel addConsoCard" aria-labelledby="add-conso-title">
         <header class="panelTop addConsoCard__head">
           <div>
@@ -32,7 +31,6 @@
             </p>
           </div>
         </header>
-
         <form
           id="addConsoForm"
           class="form addConsoForm"
@@ -49,16 +47,13 @@
               required
             />
           </div>
-
           <fieldset class="addConsoForm__group">
             <legend>Ajouter une première conso</legend>
-
             <div class="addConsoForm__grid">
               <div class="field">
                 <label for="conso_date">Date</label>
                 <input id="conso_date" name="conso_date" type="date" required />
               </div>
-
               <div class="field">
                 <label for="conso_type">Type</label>
                 <select id="conso_type" name="conso_type" required>
@@ -66,7 +61,6 @@
                   <option value="gaz">Gaz</option>
                 </select>
               </div>
-
               <div class="field addConsoForm__value">
                 <label for="conso_value">Valeur (kWh)</label>
                 <input
@@ -84,29 +78,37 @@
               </div>
             </div>
           </fieldset>
-
           <fieldset class="addConsoForm__group">
-            <legend>Objectif du profil</legend>
-
+            <legend>Objectifs du profil (mensuel)</legend>
             <div class="addConsoForm__grid">
               <div class="field">
-                <label for="goal_target">Objectif (kWh)</label>
+                <label for="goal_elec">Objectif Électricité (kWh/mois)</label>
                 <input
-                  id="goal_target"
-                  name="goal_target"
+                  id="goal_elec"
+                  name="goal_elec"
                   type="number"
                   step="0.1"
                   min="0"
                   placeholder="ex: 480"
                 />
               </div>
+              <div class="field">
+                <label for="goal_gas">Objectif Gaz (kWh/mois)</label>
+                <input
+                  id="goal_gas"
+                  name="goal_gas"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  placeholder="ex: 220"
+                />
+              </div>
             </div>
-
             <div class="hint muted">
-              Un seul objectif est enregistré pour ce profil.
+              On enregistre 2 objectifs : un pour l’électricité et un pour le
+              gaz. (Weekly = monthly / 4)
             </div>
           </fieldset>
-
           <button
             class="btn btn--primary form__btn addConsoForm__submit"
             type="submit"
@@ -117,66 +119,90 @@
         </form>
       </section>
     </main>
-
     <script>
       const $ = (s) => document.querySelector(s);
 
-      // default date = today
       $("#conso_date").value = new Date().toISOString().slice(0, 10);
 
       function mapEnergy(v) {
         return v === "gaz" ? "gas" : "electricity";
       }
 
-      async function apiJson(url, opts) {
-        const res = await fetch(url, { credentials: "include", ...opts });
+      async function apiJson(url, opts = {}) {
+        const res = await fetch(url, {
+          credentials: "include",
+          ...opts,
+        });
+
+        const text = await res.text();
+        let data = null;
+
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch (_) {}
+
         if (res.status === 401) {
           const next = window.location.pathname + window.location.search;
           window.location.href = `/login?next=${encodeURIComponent(next)}`;
           throw new Error("HTTP 401 - unauthorized");
         }
-        const text = await res.text();
-        let data = null;
-        try {
-          data = text ? JSON.parse(text) : null;
-        } catch (_) {}
+
         if (!res.ok) {
           const msg = data ? JSON.stringify(data) : text;
           throw new Error(`HTTP ${res.status} - ${msg}`);
         }
+
         return data;
+      }
+
+      function mustBeNonNegativeNumber(n) {
+        return Number.isFinite(n) && n >= 0;
       }
 
       $("#addConsoForm").addEventListener("submit", async (e) => {
         e.preventDefault();
+
         const out = $("#out");
         out.textContent = "loading...";
 
         const profileName = $("#profile_name").value.trim();
-        const date = $("#conso_date").value; // YYYY-MM-DD
+        const date = $("#conso_date").value;
         const typeRaw = $("#conso_type").value;
         const value = Number($("#conso_value").value);
-        const goalTarget = Number($("#goal_target").value || 0);
+        const goalElecMonthly = Number($("#goal_elec").value || 0);
+        const goalGasMonthly = Number($("#goal_gas").value || 0);
 
-        if (!profileName) return (out.textContent = "Nom du profil requis");
-        if (!date) return (out.textContent = "Date requise");
-        if (!Number.isFinite(value) || value < 0)
-          return (out.textContent = "Valeur invalide");
-        if (!Number.isFinite(goalTarget) || goalTarget < 0)
-          return (out.textContent = "Objectif invalide");
+        if (!profileName) {
+          out.textContent = "Nom du profil requis";
+          return;
+        }
+        if (!date) {
+          out.textContent = "Date requise";
+          return;
+        }
+        if (!mustBeNonNegativeNumber(value)) {
+          out.textContent = "Valeur invalide";
+          return;
+        }
+        if (!mustBeNonNegativeNumber(goalElecMonthly)) {
+          out.textContent = "Objectif électricité invalide";
+          return;
+        }
+        if (!mustBeNonNegativeNumber(goalGasMonthly)) {
+          out.textContent = "Objectif gaz invalide";
+          return;
+        }
 
         const energy = mapEnergy(typeRaw);
         const recorded_at = `${date}T00:00:00Z`;
 
         try {
-          // 1) create place
           const place = await apiJson("/api/places", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name: profileName }),
           });
 
-          // 2) add first consumption
           const conso = await apiJson("/api/add-data", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -189,24 +215,33 @@
             }),
           });
 
-          const goals = await Promise.all(
-            ["electricity", "gas"].map((kind) =>
-              apiJson(`/api/places/${place.id}/goals`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  energy: kind,
-                  weekly_kwh: goalTarget > 0 ? goalTarget / 4 : 0,
-                  monthly_kwh: goalTarget,
-                }),
+          await Promise.all([
+            apiJson(`/api/places/${place.id}/goals`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                energy: "electricity",
+                weekly_kwh: goalElecMonthly > 0 ? goalElecMonthly / 4 : 0,
+                monthly_kwh: goalElecMonthly,
               }),
-            ),
-          );
+            }),
+            apiJson(`/api/places/${place.id}/goals`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                energy: "gas",
+                weekly_kwh: goalGasMonthly > 0 ? goalGasMonthly / 4 : 0,
+                monthly_kwh: goalGasMonthly,
+              }),
+            }),
+          ]);
 
           out.textContent =
-            `✅ OK\nPlace créée: ${place.name} (${place.id})\n` +
+            `✅ OK\n` +
+            `Place créée: ${place.name} (${place.id})\n` +
             `Conso: ${conso.value} ${conso.unit} - ${conso.energy} - ${conso.recorded_at}\n` +
-            `Objectif profil: ${goals[0].monthly_target_kwh} kWh\n\n` +
+            `Objectif élec (mois): ${goalElecMonthly} kWh\n` +
+            `Objectif gaz (mois): ${goalGasMonthly} kWh\n\n` +
             `Redirection vers dashboard...`;
 
           setTimeout(() => {
@@ -214,9 +249,10 @@
           }, 800);
         } catch (err) {
           out.textContent = "❌ " + err.message;
+          console.error(err);
         }
       });
     </script>
   </body>
-  /usr/bin/bash: line 1: q: command not found
 </html>
+"

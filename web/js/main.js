@@ -2,10 +2,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const profile = document.querySelector(".profile");
   const btn = document.querySelector(".profile__btn");
   const menu = document.querySelector(".profile__menu");
+  const defaultAvatar = "/assets/images/User.png";
 
   if (!profile || !btn || !menu) return;
 
-  // Sur desktop (hover: hover), on laisse le CSS gérer (aucun conflit)
   const canHover = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 
   const close = () => {
@@ -18,12 +18,12 @@ document.addEventListener("DOMContentLoaded", () => {
     btn.setAttribute("aria-expanded", "true");
   };
 
-  // Sur devices sans hover: toggle au clic
   btn.addEventListener("click", (e) => {
     if (canHover) return;
     e.preventDefault();
     const expanded = btn.getAttribute("aria-expanded") === "true";
-    if (expanded) close(); else open();
+    if (expanded) close();
+    else open();
   });
 
   document.addEventListener("click", (e) => {
@@ -43,14 +43,23 @@ document.addEventListener("DOMContentLoaded", () => {
   function setVisibility(el, visible) {
     if (!el) return;
     el.hidden = !visible;
-    el.style.display = visible ? (el.dataset.display || "") : "none";
+    el.style.display = visible ? el.dataset.display || "" : "none";
+  }
+
+  function applyAvatar(avatarUrl) {
+    const src = avatarUrl && /^https?:\/\//i.test(avatarUrl)
+      ? avatarUrl
+      : defaultAvatar;
+
+    document.querySelectorAll(".profile__avatar").forEach((img) => {
+      img.src = src;
+    });
   }
 
   function applyAuthLinks(isAuthenticated) {
     const protectedLinks = document.querySelectorAll("[data-auth-required]");
     protectedLinks.forEach((link) => {
-      const target =
-        link.dataset.protectedHref || link.getAttribute("href");
+      const target = link.dataset.protectedHref || link.getAttribute("href");
       if (!target) return;
       link.dataset.protectedHref = target;
       link.setAttribute("href", isAuthenticated ? target : loginHref);
@@ -67,15 +76,29 @@ document.addEventListener("DOMContentLoaded", () => {
   async function detectAuthState() {
     try {
       const res = await fetch("/api/me", { credentials: "include" });
-      applyAuthLinks(res.ok);
+      if (!res.ok) {
+        applyAuthLinks(false);
+        applyAvatar(null);
+        return;
+      }
+
+      const me = await res.json();
+      applyAuthLinks(true);
+      applyAvatar(me.avatar_url || null);
     } catch (_) {
       applyAuthLinks(false);
+      applyAvatar(null);
     }
   }
 
-  const logoutLink = document.getElementById("logoutLink");
-  if (logoutLink) {
-    logoutLink.addEventListener("click", async (e) => {
+  const logoutTargets = [
+    document.getElementById("logoutLink"),
+    document.getElementById("logoutBtn"),
+    document.getElementById("logoutCardBtn"),
+  ].filter(Boolean);
+
+  logoutTargets.forEach((target) => {
+    target.addEventListener("click", async (e) => {
       e.preventDefault();
       try {
         await fetch("/api/logout", {
@@ -86,7 +109,7 @@ document.addEventListener("DOMContentLoaded", () => {
         window.location.href = "/login";
       }
     });
-  }
+  });
 
   detectAuthState();
 });

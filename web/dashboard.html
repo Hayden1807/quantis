@@ -348,14 +348,37 @@
         <div class="dashModal__body">
           <div class="field">
             <label for="editPlaceName">Nom du profil</label>
-            <input id="editPlaceName" type="text" placeholder="ex: Maison principale" />
+            <input
+              id="editPlaceName"
+              type="text"
+              placeholder="ex: Maison principale"
+            />
           </div>
+
           <div class="field">
-            <label for="editPlaceGoal">Objectif du profil (kWh)</label>
-            <input id="editPlaceGoal" type="number" min="0" step="0.1" placeholder="ex: 480" />
+            <label for="editPlaceGoalElec">Objectif Électricité (kWh/mois)</label>
+            <input
+              id="editPlaceGoalElec"
+              type="number"
+              min="0"
+              step="0.1"
+              placeholder="ex: 480"
+            />
           </div>
+
+          <div class="field">
+            <label for="editPlaceGoalGas">Objectif Gaz (kWh/mois)</label>
+            <input
+              id="editPlaceGoalGas"
+              type="number"
+              min="0"
+              step="0.1"
+              placeholder="ex: 220"
+            />
+          </div>
+
           <p class="muted">
-            Cet objectif unique sera appliqué au profil entier.
+            Un objectif séparé sera enregistré pour l’électricité et pour le gaz.
           </p>
         </div>
         <div class="dashModal__actions">
@@ -534,14 +557,31 @@
         return sel?.options?.[sel.selectedIndex]?.textContent || "ce profil";
       }
 
-      async function currentProfileGoal() {
-        if (!currentPlaceId) return 0;
-        const goals = await apiGet(`/api/places/${encodeURIComponent(currentPlaceId)}/goals`);
-        if (!Array.isArray(goals) || !goals.length) return 0;
-        return Math.max(
-          ...goals.map((goal) => Number(goal.monthly_target_kwh) || 0),
-          0,
+      async function currentProfileGoals() {
+        if (!currentPlaceId) {
+          return { electricity: 0, gas: 0 };
+        }
+
+        const goals = await apiGet(
+          `/api/places/${encodeURIComponent(currentPlaceId)}/goals`,
         );
+
+        const result = {
+          electricity: 0,
+          gas: 0,
+        };
+
+        if (!Array.isArray(goals)) return result;
+
+        for (const goal of goals) {
+          const energyKey = String(goal.energy || "").toLowerCase();
+          const monthly = Number(goal.monthly_target_kwh) || 0;
+
+          if (energyKey === "electricity") result.electricity = monthly;
+          if (energyKey === "gas") result.gas = monthly;
+        }
+
+        return result;
       }
 
       function openModal(id) {
@@ -560,8 +600,13 @@
 
       async function openEditModal() {
         if (!currentPlaceId) return;
+
+        const goals = await currentProfileGoals();
+
         $("#editPlaceName").value = currentPlaceName();
-        $("#editPlaceGoal").value = String(await currentProfileGoal());
+        $("#editPlaceGoalElec").value = String(goals.electricity || 0);
+        $("#editPlaceGoalGas").value = String(goals.gas || 0);
+
         openModal("editPlaceModal");
       }
 
@@ -985,11 +1030,17 @@
           if (!currentPlaceId) return;
 
           const name = $("#editPlaceName").value.trim();
-          const goalTarget = Number($("#editPlaceGoal").value || 0);
+          const goalElec = Number($("#editPlaceGoalElec").value || 0);
+          const goalGas = Number($("#editPlaceGoalGas").value || 0);
 
           if (!name) return alert("Nom du profil requis");
-          if (!Number.isFinite(goalTarget) || goalTarget < 0) {
-            return alert("Objectif invalide");
+
+          if (!Number.isFinite(goalElec) || goalElec < 0) {
+            return alert("Objectif électricité invalide");
+          }
+
+          if (!Number.isFinite(goalGas) || goalGas < 0) {
+            return alert("Objectif gaz invalide");
           }
 
           saveBtn.disabled = true;
@@ -998,13 +1049,18 @@
               name,
             });
 
-            await Promise.all(["electricity", "gas"].map((kind) =>
+            await Promise.all([
               apiPut(`/api/places/${encodeURIComponent(currentPlaceId)}/goals`, {
-                energy: kind,
-                weekly_kwh: goalTarget > 0 ? goalTarget / 4 : 0,
-                monthly_kwh: goalTarget,
+                energy: "electricity",
+                weekly_kwh: goalElec > 0 ? goalElec / 4 : 0,
+                monthly_kwh: goalElec,
               }),
-            ));
+              apiPut(`/api/places/${encodeURIComponent(currentPlaceId)}/goals`, {
+                energy: "gas",
+                weekly_kwh: goalGas > 0 ? goalGas / 4 : 0,
+                monthly_kwh: goalGas,
+              }),
+            ]);
 
             await loadPlaces(currentPlaceId);
             await refreshAll();

@@ -114,7 +114,7 @@
             >
               <div>
                 <span class="profileAction__title">Seuils de consommation</span>
-                <span class="profileAction__desc">Definir votre objectif</span>
+                <span class="profileAction__desc">Par profil, électricité + gaz</span>
               </div>
               <span class="profileAction__chev">></span>
             </button>
@@ -123,15 +123,15 @@
               <div>
                 <span class="profileRow__title">Alertes de consommation</span>
                 <span class="profileRow__desc"
-                  >Recevoir un rappel automatique</span
+                  >Envoyer un mail quand un objectif est dépassé</span
                 >
               </div>
               <div class="profileRow__controls">
-                <span class="profileRow__status" data-switch-label>On</span>
+                <span class="profileRow__status" id="alertEmailStatus">On</span>
                 <button
                   class="switch is-on"
+                  id="alertEmailSwitch"
                   type="button"
-                  data-switch
                   aria-pressed="true"
                   aria-label="Activer les alertes"
                 ></button>
@@ -145,7 +145,7 @@
             <h2 class="panelTop__title">Exporter & donnees</h2>
           </header>
           <div class="profileCard__body">
-            <button class="profileAction" type="button">
+            <button class="profileAction" type="button" disabled>
               <div>
                 <span class="profileAction__title">Exporter mes donnees</span>
                 <span class="profileAction__desc"
@@ -271,7 +271,9 @@
           <button class="btn btn--ghost" type="button" data-modal-close>
             Annuler
           </button>
-          <button class="btn btn--primary" type="button">Enregistrer</button>
+          <button class="btn btn--primary" id="saveAccountBtn" type="button">
+            Enregistrer
+          </button>
         </div>
       </div>
     </div>
@@ -301,29 +303,27 @@
         </header>
         <div class="modal__body">
           <div class="field">
-            <label for="threshold-current">Seuil actuel</label>
+            <label for="threshold-profile">Profil</label>
+            <select id="threshold-profile"></select>
+          </div>
+          <div class="field">
+            <label for="threshold-elec">Objectif Électricité (kWh/mois)</label>
             <input
-              id="threshold-current"
-              type="text"
-              value="386 kWh"
-              readonly
+              id="threshold-elec"
+              type="number"
+              step="0.1"
+              min="0"
+              placeholder="ex: 420"
             />
           </div>
           <div class="field">
-            <label for="threshold-profile">Profil</label>
-            <select id="threshold-profile">
-              <option>Maison</option>
-              <option>Bureau</option>
-              <option>Appartement</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="threshold-new">Nouveau seuil (kWh)</label>
+            <label for="threshold-gas">Objectif Gaz (kWh/mois)</label>
             <input
-              id="threshold-new"
+              id="threshold-gas"
               type="number"
               step="0.1"
-              placeholder="ex: 420"
+              min="0"
+              placeholder="ex: 220"
             />
           </div>
         </div>
@@ -331,7 +331,9 @@
           <button class="btn btn--ghost" type="button" data-modal-close>
             Annuler
           </button>
-          <button class="btn btn--primary" type="button">Sauvegarder</button>
+          <button class="btn btn--primary" id="saveThresholdBtn" type="button">
+            Sauvegarder
+          </button>
         </div>
       </div>
     </div>
@@ -361,15 +363,14 @@
         </header>
         <div class="modal__body">
           <p class="muted">
-            Cette action supprime toutes les donnees de consommation. Action
-            irreversible.
+            Cette action reste un placeholder pour l'instant. On ne touche pas à
+            cette partie tant que l'API de purge complète n'est pas prête.
           </p>
         </div>
         <div class="modal__actions">
           <button class="btn btn--ghost" type="button" data-modal-close>
-            Annuler
+            Fermer
           </button>
-          <button class="btn btn--danger" type="button">Confirmer</button>
         </div>
       </div>
     </div>
@@ -411,7 +412,7 @@
             <input
               id="password-new"
               type="password"
-              placeholder="Minimum 8 caracteres"
+              placeholder="Minimum 10 caracteres"
             />
           </div>
           <div class="field">
@@ -427,7 +428,9 @@
           <button class="btn btn--ghost" type="button" data-modal-close>
             Annuler
           </button>
-          <button class="btn btn--primary" type="button">Mettre a jour</button>
+          <button class="btn btn--primary" id="savePasswordBtn" type="button">
+            Mettre a jour
+          </button>
         </div>
       </div>
     </div>
@@ -445,34 +448,5 @@
         width: 100%;
       }
     </style>
-
-    <script>
-      function bindLogout() {
-        const logoutTargets = [
-          document.getElementById("logoutBtn"),
-          document.getElementById("logoutCardBtn"),
-        ].filter(Boolean);
-
-        logoutTargets.forEach((btn) => {
-          btn.addEventListener("click", async () => {
-            try {
-              const res = await fetch("/api/logout", {
-                method: "POST",
-                credentials: "include",
-              });
-              if (res.ok) {
-                window.location.href = "/login";
-              } else {
-                alert("Logout failed: " + (await res.text()));
-              }
-            } catch (e) {
-              alert("Logout error: " + e.message);
-            }
-          });
-        });
-      }
-
-      bindLogout();
-    </script>
   </body>
 </html>

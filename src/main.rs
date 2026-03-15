@@ -19,6 +19,13 @@ use rand::rngs::OsRng;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use time::OffsetDateTime;
 
+// Mail
+use lettre::{
+    message::Mailbox,
+    transport::smtp::authentication::Credentials,
+    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
+};
+
 // Cookies
 use actix_web::cookie::{Cookie, SameSite};
 use actix_web::cookie::time::Duration as CookieDuration;
@@ -51,11 +58,20 @@ struct LoginResp {
 
 // === token ===
 #[derive(Clone)]
+struct MailerState {
+    from_email: String,
+    from_name: String,
+    transport: AsyncSmtpTransport<Tokio1Executor>,
+}
+
+#[derive(Clone)]
 struct AppState {
     db: PgPool,
     jwt_encoding: EncodingKey,
     jwt_decoding: DecodingKey,
     auth_cookie_name: String,
+    mailer: Option<MailerState>,
+    password_reset_url_base: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -70,6 +86,57 @@ struct AuthResp {
     token: String,
     id: Uuid,
     email: String,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+struct MeResp {
+    id: Uuid,
+    email: String,
+    username: Option<String>,
+    avatar_url: Option<String>,
+    alert_email_enabled: bool,
+}
+
+#[derive(Deserialize)]
+struct UpdateMeReq {
+    email: String,
+    username: String,
+    avatar_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UpdateAlertPrefsReq {
+    alert_email_enabled: bool,
+}
+
+#[derive(Deserialize)]
+struct ChangePasswordReq {
+    current_password: String,
+    new_password: String,
+}
+
+#[derive(Deserialize)]
+struct ForgotPasswordReq {
+    email: String,
+}
+
+#[derive(Deserialize)]
+struct ResetPasswordReq {
+    token: String,
+    new_password: String,
+}
+
+#[derive(Serialize)]
+struct SimpleMessageResp {
+    message: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct AlertPeriodRow {
+    period: String,
+    period_key: String,
+    total_kwh: f64,
+    goal_kwh: f64,
 }
 
 #[derive(Deserialize)]
@@ -248,6 +315,303 @@ fn normalize_email(email: &str) -> String {
 fn basic_email_valid(email: &str) -> bool {
     let e = email.trim();
     e.contains('@') && e.contains('.') && e.len() <= 254
+}
+
+fn normalize_username(username: &str) -> String {
+    username.trim().to_string()
+}
+
+fn basic_username_valid(username: &str) -> bool {
+    let u = username.trim();
+    !u.is_empty() && u.len() >= 3 && u.len() <= 40
+}
+
+fn normalize_avatar_url(value: Option<&str>) -> Option<String> {
+    let v = value.unwrap_or("").trim();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v.to_string())
+    }
+}
+
+fn basic_avatar_url_valid(value: Option<&str>) -> bool {
+    match normalize_avatar_url(value) {
+        None => true,
+        Some(v) => (v.starts_with("http://") || v.starts_with("https://")) && v.len() <= 500,
+    }
+}
+
+fn user_id_from_claims(claims: &Claims) -> Result<Uuid, HttpResponse> {
+    Uuid::parse_str(&claims.sub)
+        .map_err(|_| HttpResponse::Unauthorized().body("invalid token"))
+}
+
+async fn load_me(state: &AppState, user_id: Uuid) -> Result<MeResp, HttpResponse> {
+    let row: Result<MeResp, sqlx::Error> = sqlx::query_as(
+        r#"
+        SELECT
+          id,
+          email,
+          username,
+          avatar_url,
+          COALESCE(alert_email_enabled, true) AS alert_email_enabled
+        FROM users
+        WHERE id = $1
+        "#
+    )
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await;
+
+    match row {
+        Ok(v) => Ok(v),
+        Err(sqlx::Error::RowNotFound) => Err(HttpResponse::Unauthorized().body("user not found")),
+        Err(e) => {
+            eprintln!("LOAD ME error: {e:?}");
+            Err(HttpResponse::InternalServerError().body("db error"))
+        }
+    }
+}
+
+fn energy_label(energy: &str) -> &'static str {
+    if energy == "gas" { "gaz" } else { "électricité" }
+}
+
+fn period_label(period: &str) -> &'static str {
+    if period == "week" { "hebdomadaire" } else { "mensuel" }
+}
+
+async fn send_threshold_alert_email(
+    mailer: &MailerState,
+    to_email: &str,
+    place_name: &str,
+    energy: &str,
+    period: &str,
+    total_kwh: f64,
+    goal_kwh: f64,
+) -> Result<(), String> {
+    let from: Mailbox = format!("{} <{}>", mailer.from_name, mailer.from_email)
+        .parse()
+        .map_err(|e| format!("invalid from mailbox: {e}"))?;
+    let to: Mailbox = to_email
+        .parse()
+        .map_err(|e| format!("invalid recipient mailbox: {e}"))?;
+
+    let subject = format!(
+        "Quantis - objectif {} dépassé ({})",
+        period_label(period),
+        energy_label(energy)
+    );
+
+    let body = format!(
+        "Bonjour,\n\nVotre profil \"{}\" a dépassé son objectif {} pour le {}.\n\nÉnergie : {}\nConsommation actuelle : {:.1} kWh\nObjectif : {:.1} kWh\nDépassement : {:.1} kWh\n\nConnectez-vous à Quantis pour consulter le dashboard et l'historique.\n",
+        place_name,
+        period_label(period),
+        energy_label(energy),
+        energy_label(energy),
+        total_kwh,
+        goal_kwh,
+        total_kwh - goal_kwh
+    );
+
+    let email = Message::builder()
+        .from(from)
+        .to(to)
+        .subject(subject)
+        .body(body)
+        .map_err(|e| format!("message build error: {e}"))?;
+
+    mailer
+        .transport
+        .send(email)
+        .await
+        .map_err(|e| format!("smtp send error: {e}"))?;
+
+    Ok(())
+}
+
+
+async fn send_password_reset_email(
+    mailer: &MailerState,
+    to_email: &str,
+    reset_url: &str,
+) -> Result<(), String> {
+    let from: Mailbox = format!("{} <{}>", mailer.from_name, mailer.from_email)
+        .parse()
+        .map_err(|e| format!("invalid from mailbox: {e}"))?;
+    let to: Mailbox = to_email
+        .parse()
+        .map_err(|e| format!("invalid recipient mailbox: {e}"))?;
+
+    let subject = "Quantis - réinitialisation du mot de passe";
+    let body = format!(
+        "Bonjour,\n\nVous avez demandé la réinitialisation de votre mot de passe Quantis.\n\nCliquez sur ce lien pour choisir un nouveau mot de passe :\n{}\n\nSi vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer ce message.\nCe lien expire dans 1 heure.\n",
+        reset_url
+    );
+
+    let email = Message::builder()
+        .from(from)
+        .to(to)
+        .subject(subject)
+        .body(body)
+        .map_err(|e| format!("message build error: {e}"))?;
+
+    mailer
+        .transport
+        .send(email)
+        .await
+        .map_err(|e| format!("smtp send error: {e}"))?;
+
+    Ok(())
+}
+
+async fn maybe_send_threshold_alerts(
+    state: &AppState,
+    user_id: Uuid,
+    user_email: &str,
+    place_id: Uuid,
+    place_name: &str,
+    energy: &str,
+) {
+    let row: Result<(bool,), sqlx::Error> = sqlx::query_as(
+        r#"
+        SELECT COALESCE(alert_email_enabled, true)
+        FROM users
+        WHERE id = $1
+        "#
+    )
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await;
+
+    let alerts_enabled = match row {
+        Ok((v,)) => v,
+        Err(e) => {
+            eprintln!("ALERT PREFS error: {e:?}");
+            return;
+        }
+    };
+
+    if !alerts_enabled {
+        return;
+    }
+
+    let mailer = match &state.mailer {
+        Some(v) => v,
+        None => return,
+    };
+
+    let periods: Result<Vec<AlertPeriodRow>, sqlx::Error> = sqlx::query_as(
+        r#"
+        WITH goals AS (
+          SELECT
+            COALESCE(MAX(CASE WHEN energy = $2::energy_type THEN weekly_target_kwh END), 0)::float8 AS weekly_goal_kwh,
+            COALESCE(MAX(CASE WHEN energy = $2::energy_type THEN monthly_target_kwh END), 0)::float8 AS monthly_goal_kwh
+          FROM place_goals
+          WHERE place_id = $1
+        ),
+        totals AS (
+          SELECT
+            COALESCE(SUM(CASE WHEN recorded_at >= date_trunc('week', now()) THEN value END), 0)::float8 AS weekly_total_kwh,
+            COALESCE(SUM(CASE WHEN recorded_at >= date_trunc('month', now()) THEN value END), 0)::float8 AS monthly_total_kwh
+          FROM consumptions
+          WHERE place_id = $1
+            AND energy = $2::energy_type
+        )
+        SELECT
+          'week'::text AS period,
+          to_char(date_trunc('week', now()), 'YYYY-MM-DD') AS period_key,
+          totals.weekly_total_kwh AS total_kwh,
+          goals.weekly_goal_kwh AS goal_kwh
+        FROM goals, totals
+        UNION ALL
+        SELECT
+          'month'::text AS period,
+          to_char(date_trunc('month', now()), 'YYYY-MM') AS period_key,
+          totals.monthly_total_kwh AS total_kwh,
+          goals.monthly_goal_kwh AS goal_kwh
+        FROM goals, totals
+        "#
+    )
+    .bind(place_id)
+    .bind(energy)
+    .fetch_all(&state.db)
+    .await;
+
+    let periods = match periods {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("ALERT PERIODS error: {e:?}");
+            return;
+        }
+    };
+
+    for row in periods {
+        if row.goal_kwh <= 0.0 || row.total_kwh <= row.goal_kwh {
+            continue;
+        }
+
+        let inserted: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
+            r#"
+            INSERT INTO alert_dispatches (user_id, place_id, energy, period, period_key, sent_at)
+            VALUES ($1, $2, $3::energy_type, $4, $5, now())
+            ON CONFLICT DO NOTHING
+            RETURNING period_key
+            "#
+        )
+        .bind(user_id)
+        .bind(place_id)
+        .bind(energy)
+        .bind(&row.period)
+        .bind(&row.period_key)
+        .fetch_optional(&state.db)
+        .await;
+
+        let should_send = match inserted {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(e) => {
+                eprintln!("ALERT DISPATCH insert error: {e:?}");
+                false
+            }
+        };
+
+        if !should_send {
+            continue;
+        }
+
+        if let Err(e) = send_threshold_alert_email(
+            mailer,
+            user_email,
+            place_name,
+            energy,
+            &row.period,
+            row.total_kwh,
+            row.goal_kwh,
+        )
+        .await
+        {
+            eprintln!("ALERT EMAIL send error: {e}");
+            let _ = sqlx::query(
+                r#"
+                DELETE FROM alert_dispatches
+                WHERE user_id = $1
+                  AND place_id = $2
+                  AND energy = $3::energy_type
+                  AND period = $4
+                  AND period_key = $5
+                "#
+            )
+            .bind(user_id)
+            .bind(place_id)
+            .bind(energy)
+            .bind(&row.period)
+            .bind(&row.period_key)
+            .execute(&state.db)
+            .await;
+        }
+    }
 }
 
 fn green_tip_for_energy(energy: &str, seed: u8) -> &'static str {
@@ -476,9 +840,218 @@ async fn login(req: HttpRequest, state: web::Data<AppState>, body: web::Json<Log
 
 #[get("/me")]
 async fn me(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
-    match require_auth(&req, state.get_ref()) {
-        Ok(claims) => HttpResponse::Ok().json(claims),
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let user_id = match user_id_from_claims(&claims) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    match load_me(state.get_ref(), user_id).await {
+        Ok(v) => HttpResponse::Ok().json(v),
         Err(resp) => resp,
+    }
+}
+
+#[put("/me")]
+async fn update_me(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    body: web::Json<UpdateMeReq>,
+) -> impl Responder {
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let user_id = match user_id_from_claims(&claims) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    let email = normalize_email(&body.email);
+    let username = normalize_username(&body.username);
+    let avatar_url = normalize_avatar_url(body.avatar_url.as_deref());
+
+    if !basic_email_valid(&email) {
+        return HttpResponse::BadRequest().body("invalid email");
+    }
+    if !basic_username_valid(&username) {
+        return HttpResponse::BadRequest().body("invalid username");
+    }
+    if !basic_avatar_url_valid(body.avatar_url.as_deref()) {
+        return HttpResponse::BadRequest().body("invalid avatar url");
+    }
+
+    let updated: Result<MeResp, sqlx::Error> = sqlx::query_as(
+        r#"
+        UPDATE users
+        SET email = $2,
+            username = $3,
+            avatar_url = $4
+        WHERE id = $1
+        RETURNING
+          id,
+          email,
+          username,
+          avatar_url,
+          COALESCE(alert_email_enabled, true) AS alert_email_enabled
+        "#
+    )
+    .bind(user_id)
+    .bind(&email)
+    .bind(&username)
+    .bind(avatar_url)
+    .fetch_one(&state.db)
+    .await;
+
+    match updated {
+        Ok(me_resp) => {
+            let token = match make_jwt(state.get_ref(), me_resp.id, &me_resp.email) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("JWT UPDATE ME ERROR: {e:?}");
+                    return HttpResponse::InternalServerError().body("jwt error");
+                }
+            };
+
+            let cookie = build_auth_cookie(state.get_ref(), &token, false);
+            HttpResponse::Ok().cookie(cookie).json(me_resp)
+        }
+        Err(sqlx::Error::Database(db_err)) => {
+            let is_unique = db_err.code().as_deref() == Some("23505")
+                || db_err.constraint() == Some("users_email_key");
+            if is_unique {
+                HttpResponse::Conflict().body("email already exists")
+            } else {
+                eprintln!("UPDATE ME db error: {db_err:?}");
+                HttpResponse::InternalServerError().body("db error")
+            }
+        }
+        Err(e) => {
+            eprintln!("UPDATE ME error: {e:?}");
+            HttpResponse::InternalServerError().body("db error")
+        }
+    }
+}
+
+#[put("/me/preferences")]
+async fn update_me_preferences(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    body: web::Json<UpdateAlertPrefsReq>,
+) -> impl Responder {
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let user_id = match user_id_from_claims(&claims) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    let updated: Result<MeResp, sqlx::Error> = sqlx::query_as(
+        r#"
+        UPDATE users
+        SET alert_email_enabled = $2
+        WHERE id = $1
+        RETURNING
+          id,
+          email,
+          username,
+          avatar_url,
+          COALESCE(alert_email_enabled, true) AS alert_email_enabled
+        "#
+    )
+    .bind(user_id)
+    .bind(body.alert_email_enabled)
+    .fetch_one(&state.db)
+    .await;
+
+    match updated {
+        Ok(me_resp) => HttpResponse::Ok().json(me_resp),
+        Err(e) => {
+            eprintln!("UPDATE PREFS error: {e:?}");
+            HttpResponse::InternalServerError().body("db error")
+        }
+    }
+}
+
+#[put("/me/password")]
+async fn change_password(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    body: web::Json<ChangePasswordReq>,
+) -> impl Responder {
+    let claims = match require_auth(&req, state.get_ref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let user_id = match user_id_from_claims(&claims) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    if body.new_password.len() < 10 {
+        return HttpResponse::BadRequest().body("Too short password (min 10)");
+    }
+
+    let current_hash: Result<(String,), sqlx::Error> = sqlx::query_as(
+        "SELECT password_hash FROM users WHERE id = $1"
+    )
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await;
+
+    let current_hash = match current_hash {
+        Ok((v,)) => v,
+        Err(sqlx::Error::RowNotFound) => return HttpResponse::Unauthorized().body("user not found"),
+        Err(e) => {
+            eprintln!("CHANGE PASSWORD load error: {e:?}");
+            return HttpResponse::InternalServerError().body("db error");
+        }
+    };
+
+    let parsed = match PasswordHash::new(&current_hash) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("CHANGE PASSWORD hash parse error: {e:?}");
+            return HttpResponse::InternalServerError().body("hash error");
+        }
+    };
+
+    let argon2 = Argon2::default();
+    if argon2
+        .verify_password(body.current_password.as_bytes(), &parsed)
+        .is_err()
+    {
+        return HttpResponse::Unauthorized().body("invalid current password");
+    }
+
+    let salt = SaltString::generate(&mut OsRng);
+    let new_hash = match argon2.hash_password(body.new_password.as_bytes(), &salt) {
+        Ok(v) => v.to_string(),
+        Err(e) => {
+            eprintln!("CHANGE PASSWORD hash error: {e:?}");
+            return HttpResponse::InternalServerError().body("hash error");
+        }
+    };
+
+    let updated = sqlx::query(
+        "UPDATE users SET password_hash = $2 WHERE id = $1"
+    )
+    .bind(user_id)
+    .bind(new_hash)
+    .execute(&state.db)
+    .await;
+
+    match updated {
+        Ok(_) => HttpResponse::Ok().body("ok"),
+        Err(e) => {
+            eprintln!("CHANGE PASSWORD update error: {e:?}");
+            HttpResponse::InternalServerError().body("db error")
+        }
     }
 }
 #[post("/places")]
@@ -650,6 +1223,189 @@ async fn delete_place(
 }
 
 // destroy cookie
+
+#[post("/forgot-password")]
+async fn forgot_password(
+    state: web::Data<AppState>,
+    body: web::Json<ForgotPasswordReq>,
+) -> impl Responder {
+    let generic = || {
+        HttpResponse::Ok().json(SimpleMessageResp {
+            message: "Si un compte existe pour cet email, un lien de réinitialisation a été envoyé.".to_string(),
+        })
+    };
+
+    let email = normalize_email(&body.email);
+    if !basic_email_valid(&email) {
+        return generic();
+    }
+
+    let user: Result<(Uuid, String), sqlx::Error> = sqlx::query_as(
+        r#"
+        SELECT id, email
+        FROM users
+        WHERE email = $1
+        "#
+    )
+    .bind(&email)
+    .fetch_one(&state.db)
+    .await;
+
+    let (user_id, user_email) = match user {
+        Ok(v) => v,
+        Err(sqlx::Error::RowNotFound) => return generic(),
+        Err(e) => {
+            eprintln!("FORGOT PASSWORD user lookup error: {e:?}");
+            return generic();
+        }
+    };
+
+    let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let expires_at = OffsetDateTime::now_utc() + TimeDuration::hours(1);
+
+    if let Err(e) = sqlx::query(
+        r#"
+        DELETE FROM password_reset_tokens
+        WHERE user_id = $1
+           OR expires_at <= now()
+        "#
+    )
+    .bind(user_id)
+    .execute(&state.db)
+    .await
+    {
+        eprintln!("FORGOT PASSWORD cleanup error: {e:?}");
+    }
+
+    if let Err(e) = sqlx::query(
+        r#"
+        INSERT INTO password_reset_tokens (user_id, token, expires_at)
+        VALUES ($1, $2, $3)
+        "#
+    )
+    .bind(user_id)
+    .bind(&token)
+    .bind(expires_at)
+    .execute(&state.db)
+    .await
+    {
+        eprintln!("FORGOT PASSWORD insert token error: {e:?}");
+        return generic();
+    }
+
+    let base = state.password_reset_url_base.trim_end_matches('?').trim_end_matches('&').trim_end_matches('/');
+    let reset_url = if state.password_reset_url_base.contains('?') {
+        format!("{}&token={}", state.password_reset_url_base, token)
+    } else {
+        format!("{}?token={}", base, token)
+    };
+
+    match &state.mailer {
+        Some(mailer) => {
+            if let Err(e) = send_password_reset_email(mailer, &user_email, &reset_url).await {
+                eprintln!("FORGOT PASSWORD email send error: {e}");
+            }
+        }
+        None => {
+            eprintln!("FORGOT PASSWORD mailer missing, reset link for {} => {}", user_email, reset_url);
+        }
+    }
+
+    generic()
+}
+
+#[post("/reset-password")]
+async fn reset_password(
+    state: web::Data<AppState>,
+    body: web::Json<ResetPasswordReq>,
+) -> impl Responder {
+    let token = body.token.trim();
+    if token.is_empty() {
+        return HttpResponse::BadRequest().body("missing token");
+    }
+
+    if body.new_password.len() < 10 {
+        return HttpResponse::BadRequest().body("Too short password (min 10)");
+    }
+
+    let row: Result<(Uuid, Uuid), sqlx::Error> = sqlx::query_as(
+        r#"
+        SELECT id, user_id
+        FROM password_reset_tokens
+        WHERE token = $1
+          AND used_at IS NULL
+          AND expires_at > now()
+        "#
+    )
+    .bind(token)
+    .fetch_one(&state.db)
+    .await;
+
+    let (reset_row_id, user_id) = match row {
+        Ok(v) => v,
+        Err(sqlx::Error::RowNotFound) => {
+            return HttpResponse::BadRequest().body("invalid or expired token");
+        }
+        Err(e) => {
+            eprintln!("RESET PASSWORD token lookup error: {e:?}");
+            return HttpResponse::InternalServerError().body("db error");
+        }
+    };
+
+    let argon2 = Argon2::default();
+    let salt = SaltString::generate(&mut OsRng);
+    let new_hash = match argon2.hash_password(body.new_password.as_bytes(), &salt) {
+        Ok(h) => h.to_string(),
+        Err(_) => return HttpResponse::InternalServerError().body("error while hashing password"),
+    };
+
+    let mut tx = match state.db.begin().await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("RESET PASSWORD tx begin error: {e:?}");
+            return HttpResponse::InternalServerError().body("db error");
+        }
+    };
+
+    if let Err(e) = sqlx::query(
+        "UPDATE users SET password_hash = $2 WHERE id = $1"
+    )
+    .bind(user_id)
+    .bind(&new_hash)
+    .execute(&mut *tx)
+    .await
+    {
+        eprintln!("RESET PASSWORD update user error: {e:?}");
+        return HttpResponse::InternalServerError().body("db error");
+    }
+
+    if let Err(e) = sqlx::query(
+        r#"
+        UPDATE password_reset_tokens
+        SET used_at = now()
+        WHERE id = $1 OR user_id = $2
+        "#
+    )
+    .bind(reset_row_id)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await
+    {
+        eprintln!("RESET PASSWORD mark token used error: {e:?}");
+        return HttpResponse::InternalServerError().body("db error");
+    }
+
+    if let Err(e) = tx.commit().await {
+        eprintln!("RESET PASSWORD tx commit error: {e:?}");
+        return HttpResponse::InternalServerError().body("db error");
+    }
+
+    HttpResponse::Ok().json(SimpleMessageResp {
+        message: "Mot de passe réinitialisé avec succès.".to_string(),
+    })
+}
+
+
 #[post("/logout")]
 async fn logout(req:HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let mut c = Cookie::build(state.auth_cookie_name.clone(), "")
@@ -677,23 +1433,25 @@ async fn add_data(req: HttpRequest, state: web::Data<AppState>, body: web::Json<
         Err(_) => return HttpResponse::Unauthorized().body("invalid token"),
     };
 
+    let user_email = claims.email.clone();
+
     // Check that selected place is owned by connected user
-    let owns_place = sqlx::query_scalar::<_, i32>(
-        r#"SELECT 1 FROM places WHERE id = $1 AND user_id = $2"#,
+    let place_row = sqlx::query_as::<_, (String,)>(
+        r#"SELECT name FROM places WHERE id = $1 AND user_id = $2"#,
     )
     .bind(body.place_id)
     .bind(user_id)
     .fetch_optional(&state.db)
     .await;
 
-    match owns_place {
-        Ok(Some(_)) => {}
+    let place_name = match place_row {
+        Ok(Some((name,))) => name,
         Ok(None) => return HttpResponse::NotFound().body("place not found"),
         Err(e) => {
-            eprintln!("ADD-DATA owns_place error: {e:?}");
+            eprintln!("ADD-DATA place lookup error: {e:?}");
             return HttpResponse::InternalServerError().body("db error");
         }
-    }
+    };
 
     // Check values validity
     if !body.value.is_finite() {
@@ -735,7 +1493,7 @@ async fn add_data(req: HttpRequest, state: web::Data<AppState>, body: web::Json<
             recorded_at = EXCLUDED.recorded_at,
             value = EXCLUDED.value,
             unit = EXCLUDED.unit
-        RETURNING id, place_id, value, unit, energy::text,recorded_at::text
+        RETURNING id, place_id, value, unit, energy::text, recorded_at::text
         "#,
     )
     .bind(body.place_id)
@@ -746,9 +1504,27 @@ async fn add_data(req: HttpRequest, state: web::Data<AppState>, body: web::Json<
     .fetch_one(&state.db)
     .await;
 
-    // get db result
     match res {
-        Ok((id, place_id, value, unit, energy,recorded_at)) => HttpResponse::Created().json(ConsumptionResp { id, place_id, value, unit, energy, recorded_at }),
+        Ok((id, place_id, value, unit, energy_saved, recorded_at_saved)) => {
+            maybe_send_threshold_alerts(
+                state.get_ref(),
+                user_id,
+                &user_email,
+                place_id,
+                &place_name,
+                &energy_saved,
+            )
+            .await;
+
+            HttpResponse::Created().json(ConsumptionResp {
+                id,
+                place_id,
+                value,
+                unit,
+                energy: energy_saved,
+                recorded_at: recorded_at_saved,
+            })
+        }
         Err(e) => {
             eprintln!("ADD-DATA insert error: {e:?}");
             HttpResponse::InternalServerError().body("db error")
@@ -756,7 +1532,7 @@ async fn add_data(req: HttpRequest, state: web::Data<AppState>, body: web::Json<
     }
 }
 
-#[get("places/{place_id}/goals")]
+#[get("/places/{place_id}/goals")]
 async fn get_goals(req:HttpRequest, state: web::Data<AppState>, path: web::Path<PlacePath>,) -> impl Responder {
     let claims = match require_auth(&req, state.get_ref()) {
         Ok(c) => c,
@@ -1549,6 +2325,9 @@ async fn main() -> std::io::Result<()> {
     // get env variables
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL missing");
     let jwt_secret = env::var("JWT_SECRET").expect("JWT_SECRET missing");
+    let bind_addr = env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+    let password_reset_url_base = env::var("PASSWORD_RESET_URL_BASE")
+        .unwrap_or_else(|_| "http://localhost:8000/pages/reset-password.html".to_string());
 
     // build pool
     let pool = PgPoolOptions::new()
@@ -1563,12 +2342,52 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("failed to run migrations");
 
+    let mailer = match env::var("SMTP_HOST") {
+        Ok(host) if !host.trim().is_empty() => {
+            let port = env::var("SMTP_PORT")
+                .ok()
+                .and_then(|v| v.parse::<u16>().ok())
+                .unwrap_or(1025);
+            let insecure = env::var("SMTP_INSECURE")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+
+            let builder = if insecure {
+                AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host.clone()).port(port)
+            } else {
+                match AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host) {
+                    Ok(b) => b.port(port),
+                    Err(e) => {
+                        eprintln!("SMTP relay config error: {e:?}");
+                        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host.clone()).port(port)
+                    }
+                }
+            };
+
+            let builder = match (env::var("SMTP_USERNAME"), env::var("SMTP_PASSWORD")) {
+                (Ok(username), Ok(password)) if !username.trim().is_empty() => {
+                    builder.credentials(Credentials::new(username, password))
+                }
+                _ => builder,
+            };
+
+            Some(MailerState {
+                from_email: env::var("SMTP_FROM_EMAIL").unwrap_or_else(|_| "noreply@quantis.local".to_string()),
+                from_name: env::var("SMTP_FROM_NAME").unwrap_or_else(|_| "Quantis".to_string()),
+                transport: builder.build(),
+            })
+        }
+        _ => None,
+    };
+
     // AppState (DB + JWT keys)
     let state = AppState {
         db: pool,
         jwt_encoding: EncodingKey::from_secret(jwt_secret.as_bytes()),
         jwt_decoding: DecodingKey::from_secret(jwt_secret.as_bytes()),
         auth_cookie_name: "access_token".to_string(),
+        mailer,
+        password_reset_url_base,
     };
     let state_data = web::Data::new(state);
 
@@ -1581,7 +2400,12 @@ async fn main() -> std::io::Result<()> {
             .service(health)
             .service(signup)
             .service(login)
+            .service(forgot_password)
+            .service(reset_password)
             .service(me)
+            .service(update_me)
+            .service(update_me_preferences)
+            .service(change_password)
             .service(logout)
             .service(create_place)
             .service(update_place)
@@ -1596,7 +2420,7 @@ async fn main() -> std::io::Result<()> {
             .service(dashboard_recent)
             .service(history)
     })
-    .bind(("0.0.0.0", 8080))?
+    .bind(&bind_addr)?
     .run()
     .await
 }
