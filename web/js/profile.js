@@ -99,6 +99,130 @@ document.addEventListener("DOMContentLoaded", () => {
     return $("#threshold-profile")?.value || "";
   }
 
+  function escapeCsvCell(value) {
+    const text = String(value ?? "");
+    if (/[",\n]/.test(text)) {
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+  }
+
+  function downloadCsvFile(filename, lines) {
+    const blob = new Blob(["\uFEFF" + lines.join("\n")], {
+      type: "text/csv;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function fetchAllHistoryRows(placeId) {
+    const limit = 200;
+    let page = 1;
+    let total = 0;
+    const items = [];
+
+    do {
+      const data = await apiJson(
+        `/api/history?place_id=${encodeURIComponent(placeId)}&energy=all&status=all&page=${page}&limit=${limit}&sort=desc`,
+        { headers: {} },
+      );
+      total = Number(data.total) || 0;
+      items.push(...(Array.isArray(data.items) ? data.items : []));
+      page += 1;
+    } while (items.length < total);
+
+    return items;
+  }
+
+  async function exportUserData() {
+    const exportBtn = $("#exportDataBtn");
+    if (!exportBtn) return;
+
+    exportBtn.disabled = true;
+
+    try {
+      const [me, places] = await Promise.all([
+        state.me ? Promise.resolve(state.me) : apiJson("/api/me", { headers: {} }),
+        state.places.length ? Promise.resolve(state.places) : apiJson("/api/places", { headers: {} }),
+      ]);
+
+      if (!Array.isArray(places) || !places.length) {
+        alert("Aucune donnée à exporter");
+        return;
+      }
+
+      const rows = [];
+
+      for (const place of places) {
+        const [goals, history] = await Promise.all([
+          apiJson(`/api/places/${encodeURIComponent(place.id)}/goals`, { headers: {} }),
+          fetchAllHistoryRows(place.id),
+        ]);
+
+        const goalMap = new Map(
+          (Array.isArray(goals) ? goals : []).map((goal) => [
+            String(goal.energy || "").toLowerCase(),
+            goal,
+          ]),
+        );
+
+        for (const item of history) {
+          const goal = goalMap.get(String(item.energy || "").toLowerCase());
+          rows.push({
+            email: me?.email || "",
+            username: me?.username || "",
+            place_name: place.name || "",
+            date: item.day || "",
+            energy: item.energy || "",
+            total_kwh: Number(item.total_kwh || 0).toFixed(2),
+            goal_monthly_kwh: Number(goal?.monthly_target_kwh || item.goal_kwh || 0).toFixed(2),
+            goal_weekly_kwh: Number(goal?.weekly_target_kwh || 0).toFixed(2),
+            status: item.status || "",
+          });
+        }
+      }
+
+      if (!rows.length) {
+        alert("Aucune consommation à exporter");
+        return;
+      }
+
+      const csvLines = [
+        "email,username,place_name,date,energy,total_kwh,goal_monthly_kwh,goal_weekly_kwh,status",
+        ...rows.map((row) =>
+          [
+            row.email,
+            row.username,
+            row.place_name,
+            row.date,
+            row.energy,
+            row.total_kwh,
+            row.goal_monthly_kwh,
+            row.goal_weekly_kwh,
+            row.status,
+          ]
+            .map(escapeCsvCell)
+            .join(","),
+        ),
+      ];
+
+      const username = String(me?.username || "quantis-user").replace(/[^\w-]+/g, "-");
+      downloadCsvFile(`quantis-data-${username}.csv`, csvLines);
+    } catch (error) {
+      if (error.message !== "unauthorized") {
+        alert("Export impossible: " + error.message);
+      }
+    } finally {
+      exportBtn.disabled = false;
+    }
+  }
+
   async function loadMe() {
     const me = await apiJson("/api/me");
     state.me = me;
@@ -368,6 +492,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#saveThresholdBtn")?.addEventListener("click", saveThresholds);
   $("#savePasswordBtn")?.addEventListener("click", savePassword);
   $("#alertEmailSwitch")?.addEventListener("click", toggleAlerts);
+  $("#exportDataBtn")?.addEventListener("click", exportUserData);
   $("#logoutBtn")?.addEventListener("click", logoutNow);
   $("#logoutCardBtn")?.addEventListener("click", logoutNow);
 

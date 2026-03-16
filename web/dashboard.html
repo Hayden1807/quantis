@@ -228,7 +228,13 @@
                 </div>
               </div>
 
-              <a class="btn btn--ghost" href="#" download>Exporter (CSV)</a>
+              <a
+                class="btn btn--ghost"
+                href="#"
+                id="btnDashboardExportCsv"
+                download
+                >Exporter (CSV)</a
+              >
             </div>
           </div>
 
@@ -725,6 +731,99 @@
         else el.classList.add("delta--down");
       }
 
+      function escapeCsvCell(value) {
+        const text = String(value ?? "");
+        if (/[",\n]/.test(text)) {
+          return `"${text.replace(/"/g, '""')}"`;
+        }
+        return text;
+      }
+
+      function downloadCsvFile(filename, lines) {
+        const blob = new Blob(["\uFEFF" + lines.join("\n")], {
+          type: "text/csv;charset=utf-8",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      async function fetchAllHistoryRows(placeId) {
+        const limit = 200;
+        let page = 1;
+        let total = 0;
+        const items = [];
+
+        do {
+          const data = await apiGet(
+            `/api/history?place_id=${encodeURIComponent(placeId)}&energy=all&status=all&page=${page}&limit=${limit}&sort=desc`,
+          );
+          total = Number(data.total) || 0;
+          items.push(...(Array.isArray(data.items) ? data.items : []));
+          page += 1;
+        } while (items.length < total);
+
+        return items;
+      }
+
+      function bindExportButton() {
+        const exportBtn = $("#btnDashboardExportCsv");
+        if (!exportBtn) return;
+
+        exportBtn.addEventListener("click", async (event) => {
+          event.preventDefault();
+
+          if (!currentPlaceId) {
+            alert("Aucun profil sélectionné");
+            return;
+          }
+
+          const placeName =
+            $("#scopeName")?.textContent?.trim().replace(/[^\w-]+/g, "-") ||
+            "profil";
+
+          exportBtn.setAttribute("aria-disabled", "true");
+          exportBtn.style.pointerEvents = "none";
+
+          try {
+            const rows = await fetchAllHistoryRows(currentPlaceId);
+            if (!rows.length) {
+              alert("Aucune donnée à exporter pour ce profil");
+              return;
+            }
+
+            const csvLines = [
+              "date,energy,total_kwh,goal_kwh,status",
+              ...rows.map((row) =>
+                [
+                  row.day,
+                  row.energy,
+                  Number(row.total_kwh).toFixed(2),
+                  Number(row.goal_kwh || 0).toFixed(2),
+                  row.status,
+                ]
+                  .map(escapeCsvCell)
+                  .join(","),
+              ),
+            ];
+
+            downloadCsvFile(`dashboard-${placeName}.csv`, csvLines);
+          } catch (error) {
+            if (error.message !== "unauthorized") {
+              alert("Export impossible: " + error.message);
+            }
+          } finally {
+            exportBtn.removeAttribute("aria-disabled");
+            exportBtn.style.pointerEvents = "";
+          }
+        });
+      }
+
       async function loadPlaces(preferredPlaceId = currentPlaceId) {
         const places = await apiGet("/api/places");
         const sel = $("#placeSelect");
@@ -1128,6 +1227,7 @@
           bindToggles();
           bindAddForm();
           bindEditPlace();
+          bindExportButton();
           bindLogout();
 
           await loadPlaces();

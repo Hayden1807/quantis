@@ -67,6 +67,7 @@ body{
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 16px;
   background: rgba(255,255,255,0.025);
+  min-width: 0;
 }
 
 .addConsoForm__group legend{
@@ -80,8 +81,18 @@ body{
 
 .addConsoForm__grid{
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.addConsoForm__grid > .field{
+  min-width: 0;
+}
+
+.addConsoForm__grid input,
+.addConsoForm__grid select{
+  width: 100%;
+  min-width: 0;
 }
 
 .addConsoForm__grid > .field:only-child{
