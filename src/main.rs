@@ -5,8 +5,10 @@ use sqlx::{
     types::Uuid,
 };
 use std::env;
+use redis::{AsyncCommands, aio::ConnectionManager};
 
 use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 
 // Hasher
 use argon2::{
@@ -67,6 +69,7 @@ struct MailerState {
 #[derive(Clone)]
 struct AppState {
     db: PgPool,
+    redis: ConnectionManager,
     jwt_encoding: EncodingKey,
     jwt_decoding: DecodingKey,
     auth_cookie_name: String,
@@ -88,7 +91,7 @@ struct AuthResp {
     email: String,
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, Deserialize, sqlx::FromRow)]
 struct MeResp {
     id: Uuid,
     email: String,
@@ -177,7 +180,7 @@ struct SetGoalReq {
     monthly_kwh: f64,
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, Deserialize, sqlx::FromRow)]
 struct GoalRow {
     energy: String,
     weekly_target_kwh: f64,
@@ -189,7 +192,7 @@ struct PlacePath {
     place_id: Uuid,
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, Deserialize, sqlx::FromRow)]
 struct PlaceRow {
     id: Uuid,
     name: String,
@@ -201,7 +204,7 @@ struct SummaryQuery {
     period: String, // week || mounth
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, Deserialize, sqlx::FromRow)]
 struct EnergySummary {
     energy: String,
     total_kwh: f64,
@@ -210,7 +213,7 @@ struct EnergySummary {
     last_recorded_at: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct SummaryResp {
     period: String,
     items: Vec<EnergySummary>,
@@ -372,6 +375,90 @@ async fn load_me(state: &AppState, user_id: Uuid) -> Result<MeResp, HttpResponse
             Err(HttpResponse::InternalServerError().body("db error"))
         }
     }
+}
+
+
+async fn cache_get_json<T>(state: &AppState, key: &str) -> Option<T>
+where
+    T: DeserializeOwned,
+{
+    let mut redis = state.redis.clone();
+
+    let cached: Option<String> = match redis.get(key).await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("REDIS GET error on key {key}: {e:?}");
+            return None;
+        }
+    };
+
+    let cached = cached?;
+    match serde_json::from_str::<T>(&cached) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            eprintln!("REDIS JSON decode error on key {key}: {e:?}");
+            None
+        }
+    }
+}
+
+async fn cache_set_json<T>(state: &AppState, key: &str, value: &T, ttl_seconds: u64)
+where
+    T: Serialize,
+{
+    let json = match serde_json::to_string(value) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("REDIS JSON encode error on key {key}: {e:?}");
+            return;
+        }
+    };
+
+    let mut redis = state.redis.clone();
+
+    let res: redis::RedisResult<()> = redis.set_ex(key, json, ttl_seconds).await;
+    if let Err(e) = res {
+        eprintln!("REDIS SETEX error on key {key}: {e:?}");
+    }
+}
+
+async fn cache_del(state: &AppState, key: &str) {
+    let mut redis = state.redis.clone();
+
+    let res: redis::RedisResult<usize> = redis.del(key).await;
+    if let Err(e) = res {
+        eprintln!("REDIS DEL error on key {key}: {e:?}");
+    }
+}
+
+fn cache_key_me(user_id: Uuid) -> String {
+    format!("me:{user_id}")
+}
+
+fn cache_key_places(user_id: Uuid) -> String {
+    format!("places:{user_id}")
+}
+
+fn cache_key_goals(user_id: Uuid, place_id: Uuid) -> String {
+    format!("goals:{user_id}:{place_id}")
+}
+
+fn cache_key_summary(user_id: Uuid, place_id: Uuid, period: &str) -> String {
+    format!("dashboard:summary:{user_id}:{place_id}:{period}")
+}
+
+async fn invalidate_user_profile_cache(state: &AppState, user_id: Uuid) {
+    cache_del(state, &cache_key_me(user_id)).await;
+}
+
+async fn invalidate_places_cache(state: &AppState, user_id: Uuid) {
+    cache_del(state, &cache_key_places(user_id)).await;
+}
+
+async fn invalidate_place_dashboard_cache(state: &AppState, user_id: Uuid, place_id: Uuid) {
+    cache_del(state, &cache_key_goals(user_id, place_id)).await;
+    cache_del(state, &cache_key_summary(user_id, place_id, "week")).await;
+    cache_del(state, &cache_key_summary(user_id, place_id, "month")).await;
 }
 
 fn energy_label(energy: &str) -> &'static str {
@@ -849,8 +936,16 @@ async fn me(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
         Err(resp) => return resp,
     };
 
+    let cache_key = cache_key_me(user_id);
+    if let Some(cached) = cache_get_json::<MeResp>(state.get_ref(), &cache_key).await {
+        return HttpResponse::Ok().json(cached);
+    }
+
     match load_me(state.get_ref(), user_id).await {
-        Ok(v) => HttpResponse::Ok().json(v),
+        Ok(v) => {
+            cache_set_json(state.get_ref(), &cache_key, &v, 60).await;
+            HttpResponse::Ok().json(v)
+        }
         Err(resp) => resp,
     }
 }
@@ -916,6 +1011,13 @@ async fn update_me(
                 }
             };
 
+            cache_set_json(
+                state.get_ref(),
+                &cache_key_me(user_id),
+                &me_resp,
+                60,
+            ).await;
+
             let cookie = build_auth_cookie(state.get_ref(), &token, false);
             HttpResponse::Ok().cookie(cookie).json(me_resp)
         }
@@ -970,7 +1072,15 @@ async fn update_me_preferences(
     .await;
 
     match updated {
-        Ok(me_resp) => HttpResponse::Ok().json(me_resp),
+        Ok(me_resp) => {
+            cache_set_json(
+                state.get_ref(),
+                &cache_key_me(user_id),
+                &me_resp,
+                60,
+            ).await;
+            HttpResponse::Ok().json(me_resp)
+        },
         Err(e) => {
             eprintln!("UPDATE PREFS error: {e:?}");
             HttpResponse::InternalServerError().body("db error")
@@ -1089,7 +1199,10 @@ async fn create_place(req: HttpRequest, state: web::Data<AppState>, body: web::J
 
     // DB response
     match res {
-        Ok((id, name)) => HttpResponse::Created().json(PlaceResp {id, name}),
+        Ok((id, name)) => {
+            invalidate_places_cache(state.get_ref(), user_id).await;
+            HttpResponse::Created().json(PlaceResp {id, name})
+        },
         Err(sqlx::Error::Database(db_err)) => {
             let is_unique = db_err.code().as_deref() == Some("23505");
             if is_unique {
@@ -1118,13 +1231,21 @@ async fn list_places(req: HttpRequest, state: web::Data<AppState>) -> impl Respo
         Err(_) => return HttpResponse::Unauthorized().body("invalid token"),
     };
 
+    let cache_key = cache_key_places(user_id);
+    if let Some(cached) = cache_get_json::<Vec<PlaceRow>>(state.get_ref(), &cache_key).await {
+        return HttpResponse::Ok().json(cached);
+    }
+
     let rows: Result<Vec<PlaceRow>, sqlx::Error> = sqlx::query_as("SELECT id, name FROM places WHERE user_id=$1 ORDER BY created_at DESC")
         .bind(user_id)
         .fetch_all(&state.db)
         .await;
 
     match rows {
-        Ok(v) => HttpResponse::Ok().json(v),
+        Ok(v) => {
+            cache_set_json(state.get_ref(), &cache_key, &v, 60).await;
+            HttpResponse::Ok().json(v)
+        }
         Err(e) => {
             eprintln!("LIST PLACES ERROR: {e:?}");
             HttpResponse::InternalServerError().body("db_error")
@@ -1168,7 +1289,11 @@ async fn update_place(
     .await;
 
     match res {
-        Ok((id, name)) => HttpResponse::Ok().json(PlaceResp { id, name }),
+        Ok((id, name)) => {
+            invalidate_places_cache(state.get_ref(), user_id).await;
+            invalidate_place_dashboard_cache(state.get_ref(), user_id, path.place_id).await;
+            HttpResponse::Ok().json(PlaceResp { id, name })
+        },
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("place not found"),
         Err(sqlx::Error::Database(db_err)) => {
             let is_unique = db_err.code().as_deref() == Some("23505");
@@ -1213,7 +1338,11 @@ async fn delete_place(
     .await;
 
     match deleted {
-        Ok(result) if result.rows_affected() > 0 => HttpResponse::NoContent().finish(),
+        Ok(result) if result.rows_affected() > 0 => {
+            invalidate_places_cache(state.get_ref(), user_id).await;
+            invalidate_place_dashboard_cache(state.get_ref(), user_id, path.place_id).await;
+            HttpResponse::NoContent().finish()
+        },
         Ok(_) => HttpResponse::NotFound().body("place not found"),
         Err(e) => {
             eprintln!("DELETE PLACE error: {e:?}");
@@ -1506,6 +1635,8 @@ async fn add_data(req: HttpRequest, state: web::Data<AppState>, body: web::Json<
 
     match res {
         Ok((id, place_id, value, unit, energy_saved, recorded_at_saved)) => {
+            invalidate_place_dashboard_cache(state.get_ref(), user_id, place_id).await;
+
             maybe_send_threshold_alerts(
                 state.get_ref(),
                 user_id,
@@ -1558,6 +1689,11 @@ async fn get_goals(req:HttpRequest, state: web::Data<AppState>, path: web::Path<
         }
     }
 
+    let cache_key = cache_key_goals(user_id, path.place_id);
+    if let Some(cached) = cache_get_json::<Vec<GoalRow>>(state.get_ref(), &cache_key).await {
+        return HttpResponse::Ok().json(cached);
+    }
+
     let rows: Result<Vec<GoalRow>, sqlx::Error> = sqlx::query_as(
         r#"
         SELECT energy::text as energy, weekly_target_kwh, monthly_target_kwh
@@ -1571,7 +1707,10 @@ async fn get_goals(req:HttpRequest, state: web::Data<AppState>, path: web::Path<
     .await;
 
     match rows {
-        Ok(v) => HttpResponse::Ok().json(v),
+        Ok(v) => {
+            cache_set_json(state.get_ref(), &cache_key, &v, 60).await;
+            HttpResponse::Ok().json(v)
+        }
         Err(e) => {
             eprintln!("GET GOALS error: {e:?}");
             HttpResponse::InternalServerError().body("db error")
@@ -1638,7 +1777,10 @@ async fn set_goal(req: HttpRequest, state: web::Data<AppState>, path: web::Path<
     .await;
 
     match row {
-        Ok(g) => HttpResponse::Ok().json(g),
+        Ok(g) => {
+            invalidate_place_dashboard_cache(state.get_ref(), user_id, path.place_id).await;
+            HttpResponse::Ok().json(g)
+        },
         Err(e) => {
             eprintln!("SET GOAL error: {e:?}");
             HttpResponse::InternalServerError().body("db error")
@@ -1678,6 +1820,11 @@ async fn dashboard_summary(req: HttpRequest, state: web::Data<AppState>, q: web:
     let period = q.period.trim().to_lowercase();
     if !matches!(period.as_str(), "week" | "month") {
         return HttpResponse::BadRequest().body("period must be week or month");
+    }
+
+    let cache_key = cache_key_summary(user_id, q.place_id, &period);
+    if let Some(cached) = cache_get_json::<SummaryResp>(state.get_ref(), &cache_key).await {
+        return HttpResponse::Ok().json(cached);
     }
 
     // interval + goal
@@ -1723,7 +1870,11 @@ async fn dashboard_summary(req: HttpRequest, state: web::Data<AppState>, q: web:
         .await;
 
     match rows {
-        Ok(items) => HttpResponse::Ok().json(SummaryResp { period, items }),
+        Ok(items) => {
+            let resp = SummaryResp { period, items };
+            cache_set_json(state.get_ref(), &cache_key, &resp, 60).await;
+            HttpResponse::Ok().json(resp)
+        }
         Err(e) => { eprintln!("SUMMARY ERROR: {e:?}"); HttpResponse::InternalServerError().body("db error") }
     }
 }
@@ -2380,9 +2531,16 @@ async fn main() -> std::io::Result<()> {
         _ => None,
     };
 
+    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://redis:6379/".to_string());
+    let redis_client = redis::Client::open(redis_url).expect("failed to create redis client");
+    let redis = ConnectionManager::new(redis_client)
+        .await
+        .expect("failed to connect to redis");
+
     // AppState (DB + JWT keys)
     let state = AppState {
         db: pool,
+        redis,
         jwt_encoding: EncodingKey::from_secret(jwt_secret.as_bytes()),
         jwt_decoding: DecodingKey::from_secret(jwt_secret.as_bytes()),
         auth_cookie_name: "access_token".to_string(),
